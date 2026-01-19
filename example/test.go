@@ -38,7 +38,7 @@ func main() {
 
 	node := createServer(addr, nodeID)
 	picker := createPeerPicker(addr, nodeID)
-	group := createCacheGroup(addr, nodeID)
+	group := createCacheGroup(nodeID)
 	group.RegisterPeers(picker)
 
 	startServer(node, nodeID)
@@ -57,12 +57,14 @@ func main() {
 
 // createServer 创建 gRPC 服务器
 func createServer(addr, nodeID string) *myCache.Server {
-	node, err := myCache.NewServer(addr, serviceName,
+	node, err := myCache.NewServer(
+		addr,
+		serviceName,
 		myCache.WithEtcdEndpoints([]string{etcdEndpoint}),
 		myCache.WithDialTimeout(dialTimeout),
 	)
 	if err != nil {
-		log.Fatal("[节点"+nodeID+"] 创建节点失败:", err)
+		log.Fatalf("[节点 %s ] 创建失败: %v", nodeID, err)
 	}
 	return node
 }
@@ -71,47 +73,66 @@ func createServer(addr, nodeID string) *myCache.Server {
 func createPeerPicker(addr, nodeID string) *myCache.ClientPicker {
 	picker, err := myCache.NewClientPicker(addr)
 	if err != nil {
-		log.Fatal("[节点"+nodeID+"] 创建节点选择器失败:", err)
+		log.Fatalf("[节点 %s ] 创建失败: %v", nodeID, err)
 	}
 	return picker
 }
 
 // createCacheGroup 创建缓存组
-func createCacheGroup(addr, nodeID string) *myCache.Group {
+//
+// 该函数为每个节点创建独立的缓存组，并定义数据源加载逻辑。
+// 当缓存未命中且无法从远程节点获取数据时，会调用 Getter 回调从数据源加载数据。
+//
+// 参数:
+//   - nodeID: 节点标识符（如 "A"、"B"、"C"），用于区分不同的缓存节点
+//
+// 返回:
+//   - *myCache.Group: 已初始化的缓存组实例
+//
+// 核心逻辑:
+//   1. 定义 Getter 回调函数：实现缓存未命中时的数据源加载逻辑
+//   2. 创建 Group 实例：使用全局配置的组名和最大缓存容量
+//
+// 注意事项:
+//   - Getter 是分布式缓存的数据源回退机制
+//   - 本示例返回模拟数据，实际应用中应从数据库或 API 加载真实数据
+func createCacheGroup(nodeID string) *myCache.Group {
+	// 定义数据源加载回调（Getter 接口）
 	getter := myCache.GetterFunc(func(ctx context.Context, key string) ([]byte, error) {
-		log.Printf("[节点%s] 触发数据源加载: key=%s", nodeID, key)
-		return []byte(fmt.Sprintf("节点%s的数据源值", nodeID)), nil
+		log.Printf("[节点 %s ] 触发数据源加载: key = %s", nodeID, key)
+		return []byte(fmt.Sprintf("节点 %s 的数据源值", nodeID)), nil
 	})
 
+	// 创建缓存组：传入组名、最大容量、数据源回调
 	return myCache.NewGroup(groupName, cacheMaxBytes, getter)
 }
 
 // startServer 在 goroutine 中启动服务器
 func startServer(node *myCache.Server, nodeID string) {
 	go func() {
-		log.Printf("[节点%s] 开始启动服务...", nodeID)
+		log.Printf("[节点 %s ] 开始启动服务...", nodeID)
 		if err := node.Start(); err != nil {
-			log.Fatal("[节点"+nodeID+"] 启动节点失败:", err)
+			log.Fatalf("[节点 %s ] 启动节点失败: %v", nodeID, err)
 		}
 	}()
 }
 
 // waitForRegistry 等待服务注册完成
 func waitForRegistry(nodeID string) {
-	log.Printf("[节点%s] 等待节点注册...", nodeID)
+	log.Printf("[节点 %s ] 等待节点注册...", nodeID)
 	time.Sleep(registryWait)
 }
 
 // setLocalData 设置本地节点的数据
 func setLocalData(group *myCache.Group, nodeID string) {
 	localKey := fmt.Sprintf("key_%s", nodeID)
-	localValue := []byte(fmt.Sprintf("这是节点%s的数据", nodeID))
+	localValue := []byte(fmt.Sprintf("这是节点 %s 的数据", nodeID))
 
-	fmt.Printf("\n=== 节点%s：设置本地数据 ===\n", nodeID)
+	fmt.Printf("\n=== 节点 %s ：设置本地数据 ===\n", nodeID)
 	if err := group.Set(context.Background(), localKey, localValue); err != nil {
-		log.Fatal("[节点"+nodeID+"] 设置本地数据失败:", err)
+		log.Fatalf("[节点 %s ] 设置本地数据失败: %v", nodeID, err)
 	}
-	fmt.Printf("节点%s: 设置键 %s 成功\n", nodeID, localKey)
+	fmt.Printf("节点 %s : 设置键 %s 成功\n", nodeID, localKey)
 }
 
 // printDiscoveredPeers 打印已发现的节点
