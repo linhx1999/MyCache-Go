@@ -244,7 +244,7 @@ func (g *Group) Delete(ctx context.Context, key string) error {
 }
 
 // syncToPeers 同步操作到其他节点
-func (g *Group) syncToPeers(ctx context.Context, op string, key string, value []byte) {
+func (g *Group) syncToPeers(_ context.Context, op string, key string, value []byte) {
 	if g.peers == nil {
 		return
 	}
@@ -378,7 +378,7 @@ func (g *Group) fetchData(ctx context.Context, key string) (value ByteView, err 
 }
 
 // fetchFromPeer 从其他节点获取数据
-func (g *Group) fetchFromPeer(ctx context.Context, peer Peer, key string) (ByteView, error) {
+func (g *Group) fetchFromPeer(_ context.Context, peer Peer, key string) (ByteView, error) {
 	bytes, err := peer.Get(g.name, key)
 	if err != nil {
 		return ByteView{}, fmt.Errorf("failed to get from peer: %w", err)
