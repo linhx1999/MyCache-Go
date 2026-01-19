@@ -193,24 +193,23 @@ func (g *Group) Set(ctx context.Context, key string, value []byte) error {
 	if key == "" {
 		return ErrKeyRequired
 	}
+
 	if len(value) == 0 {
 		return ErrValueRequired
 	}
 
-	// 检查是否是从其他节点同步过来的请求
-	isPeerRequest := ctx.Value("from_peer") != nil
-
 	// 创建缓存视图
-	view := ByteView{b: cloneBytes(value)}
+	byteView := ByteView{b: cloneBytes(value)}
 
 	// 设置到本地缓存
 	if g.expiration > 0 {
-		g.localCache.AddWithExpiration(key, view, time.Now().Add(g.expiration))
+		g.localCache.AddWithExpiration(key, byteView, time.Now().Add(g.expiration))
 	} else {
-		g.localCache.Add(key, view)
+		g.localCache.Add(key, byteView)
 	}
 
 	// 如果不是从其他节点同步过来的请求，且启用了分布式模式，同步到其他节点
+	isPeerRequest := ctx.Value("from_peer") != nil
 	if !isPeerRequest && g.peers != nil {
 		go g.syncToPeers(ctx, "set", key, value)
 	}
