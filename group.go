@@ -39,16 +39,45 @@ func (f GetterFunc) Get(ctx context.Context, key string) ([]byte, error) {
 	return f(ctx, key)
 }
 
-// Group 是一个缓存命名空间
+// Group 是一个缓存命名空间，支持分布式缓存和数据源加载
+//
+// Group 是 MyCache 的核心组件，提供以下功能：
+//   - 缓存命名空间隔离：每个 Group 有独立的名称和缓存空间
+//   - 分布式缓存支持：通过 PeerPicker 与其他节点同步数据
+//   - 数据源回退机制：缓存未命中时通过 Getter 从数据源加载
+//   - 防缓存击穿：使用 SingleFlight 确保相同 key 的并发请求只加载一次
+//   - 缓存过期管理：支持 TTL 过期时间
+//   - 统计信息跟踪：记录命中率、加载耗时等指标
+//
+// 数据加载流程：
+//
+//	Get(key) → 本地缓存命中 → 返回数据
+//	         ↓ 未命中
+//	    使用 SingleFlight 加载（防止重复请求）
+//	         ↓
+//	    尝试从远程节点获取（通过 PeerPicker）
+//	         ↓ 未命中
+//	    调用 Getter 回调从数据源加载
+//	         ↓
+//	    存入本地缓存并返回
+//
+// 数据同步机制：
+//
+//	Set/Delete 操作会异步同步到其他节点（使用 from_peer 标记避免循环同步）
+//
+// 并发安全：
+//   - 使用 atomic 操作管理 closed 状态
+//   - mainCache 内部使用读写锁保护
+//   - loader (SingleFlight) 确保并发安全
 type Group struct {
-	name       string
-	getter     Getter
-	mainCache  *Cache
-	peers      PeerPicker
-	loader     *singleflight.Group
-	expiration time.Duration // 缓存过期时间，0表示永不过期
-	closed     int32         // 原子变量，标记组是否已关闭
-	stats      groupStats    // 统计信息
+	name       string              // 组名，用于标识和隔离不同的缓存空间
+	getter     Getter              // 数据源加载接口，缓存未命中时调用
+	mainCache  *Cache              // 本地缓存实例，存储实际数据
+	peers      PeerPicker          // 节点选择器，用于分布式缓存中的节点路由
+	loader     *singleflight.Group // SingleFlight 实例，防止缓存击穿
+	expiration time.Duration       // 缓存过期时间，0 表示永不过期
+	closed     int32               // 原子变量，标记组是否已关闭（0=运行中，1=已关闭）
+	stats      groupStats          // 统计信息，记录命中率、加载次数等指标
 }
 
 // groupStats 保存组的统计信息
