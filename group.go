@@ -18,13 +18,13 @@ var (
 )
 
 // ErrKeyRequired 键不能为空错误
-var ErrKeyRequired = errors.New("key is required")
+var ErrKeyRequired = errors.New("cache: key is required")
 
 // ErrValueRequired 值不能为空错误
-var ErrValueRequired = errors.New("value is required")
+var ErrValueRequired = errors.New("cache: value is required")
 
 // ErrGroupClosed 组已关闭错误
-var ErrGroupClosed = errors.New("cache group is closed")
+var ErrGroupClosed = errors.New("cache: group is closed")
 
 // DataSource 数据源接口，用于从外部数据源加载数据
 type DataSource interface {
