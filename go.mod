@@ -5,7 +5,6 @@ go 1.22
 toolchain go1.22.11
 
 require (
-	github.com/sirupsen/logrus v1.9.3
 	google.golang.org/grpc v1.70.0
 	google.golang.org/protobuf v1.36.4
 )

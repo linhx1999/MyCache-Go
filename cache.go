@@ -2,12 +2,12 @@ package mycache
 
 import (
 	"context"
-	"github.com/linhx1999/MyCache-Go/store"
+	"log"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/sirupsen/logrus"
+	"github.com/linhx1999/MyCache-Go/store"
 )
 
 // Cache 是对底层缓存存储的封装
@@ -80,21 +80,21 @@ func (c *Cache) ensureInitialized() {
 		// 标记为已初始化
 		atomic.StoreInt32(&c.initialized, 1)
 
-		logrus.Infof("Cache initialized with type %s, max bytes: %d", c.opts.CacheType, c.opts.MaxBytes)
+		log.Printf("[Cache] initialized with type %s, max bytes: %d", c.opts.CacheType, c.opts.MaxBytes)
 	}
 }
 
 // Add 向缓存中添加一个 key-value 对
 func (c *Cache) Add(key string, value ByteView) {
 	if atomic.LoadInt32(&c.closed) == 1 {
-		logrus.Warnf("Attempted to add to a closed cache: %s", key)
+		log.Printf("[Cache] WARN: Attempted to add to a closed cache: %s", key)
 		return
 	}
 
 	c.ensureInitialized()
 
 	if err := c.store.Set(key, value); err != nil {
-		logrus.Warnf("Failed to add key %s to cache: %v", key, err)
+		log.Printf("[Cache] WARN: Failed to add key %s to cache: %v", key, err)
 	}
 }
 
@@ -129,7 +129,7 @@ func (c *Cache) Get(ctx context.Context, key string) (value ByteView, ok bool) {
 	}
 
 	// 类型断言失败
-	logrus.Warnf("Type assertion failed for key %s, expected ByteView", key)
+	log.Printf("[Cache] WARN: Type assertion failed for key %s, expected ByteView", key)
 	atomic.AddInt64(&c.misses, 1)
 	return ByteView{}, false
 }
@@ -137,7 +137,7 @@ func (c *Cache) Get(ctx context.Context, key string) (value ByteView, ok bool) {
 // AddWithExpiration 向缓存中添加一个带过期时间的 key-value 对
 func (c *Cache) AddWithExpiration(key string, value ByteView, expirationTime time.Time) {
 	if atomic.LoadInt32(&c.closed) == 1 {
-		logrus.Warnf("Attempted to add to a closed cache: %s", key)
+		log.Printf("[Cache] WARN: Attempted to add to a closed cache: %s", key)
 		return
 	}
 
@@ -146,13 +146,13 @@ func (c *Cache) AddWithExpiration(key string, value ByteView, expirationTime tim
 	// 计算过期时间
 	expiration := time.Until(expirationTime)
 	if expiration <= 0 {
-		logrus.Debugf("Key %s already expired, not adding to cache", key)
+		log.Printf("[Cache] DEBUG: Key %s already expired, not adding to cache", key)
 		return
 	}
 
 	// 设置到底层存储
 	if err := c.store.SetWithExpiration(key, value, expiration); err != nil {
-		logrus.Warnf("Failed to add key %s to cache with expiration: %v", key, err)
+		log.Printf("[Cache] WARN: Failed to add key %s to cache with expiration: %v", key, err)
 	}
 }
 
@@ -217,7 +217,7 @@ func (c *Cache) Close() {
 	// 重置缓存状态
 	atomic.StoreInt32(&c.initialized, 0)
 
-	logrus.Debugf("Cache closed, hits: %d, misses: %d", atomic.LoadInt64(&c.hits), atomic.LoadInt64(&c.misses))
+	log.Printf("[Cache] DEBUG: Cache closed, hits: %d, misses: %d", atomic.LoadInt64(&c.hits), atomic.LoadInt64(&c.misses))
 }
 
 // Stats 返回缓存统计信息

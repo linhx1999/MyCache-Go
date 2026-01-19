@@ -3,10 +3,10 @@ package mycache
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	pb "github.com/linhx1999/MyCache-Go/pb"
-	"github.com/sirupsen/logrus"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -96,7 +96,7 @@ func (c *Client) Set(ctx context.Context, group, key string, value []byte) error
 	if err != nil {
 		return fmt.Errorf("failed to set value to kamacache: %v", err)
 	}
-	logrus.Infof("grpc set request resp: %+v", resp)
+	log.Printf("[Client] grpc set request resp: %+v", resp)
 
 	return nil
 }

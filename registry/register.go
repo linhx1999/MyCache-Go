@@ -3,10 +3,10 @@ package registry
 import (
 	"context"
 	"fmt"
+	"log"
 	"net"
 	"time"
 
-	"github.com/sirupsen/logrus"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
@@ -76,15 +76,15 @@ func Register(svcName, addr string, stopCh <-chan error) error {
 				return
 			case resp, ok := <-keepAliveCh:
 				if !ok {
-					logrus.Warn("keep alive channel closed")
+					log.Printf("[Registry] WARN: keep alive channel closed")
 					return
 				}
-				logrus.Debugf("successfully renewed lease: %d", resp.ID)
+				log.Printf("[Registry] DEBUG: successfully renewed lease: %d", resp.ID)
 			}
 		}
 	}()
 
-	logrus.Infof("Service registered: %s at %s", svcName, addr)
+	log.Printf("[Registry] Service registered: %s at %s", svcName, addr)
 	return nil
 }
 

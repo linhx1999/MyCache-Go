@@ -10,7 +10,6 @@ import (
 
 	"github.com/linhx1999/MyCache-Go/consistenthash"
 	"github.com/linhx1999/MyCache-Go/registry"
-	"github.com/sirupsen/logrus"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
@@ -142,13 +141,13 @@ func (p *ClientPicker) handleWatchEvents(events []*clientv3.Event) {
 		case clientv3.EventTypePut:
 			if _, exists := p.clients[addr]; !exists {
 				p.set(addr)
-				logrus.Infof("New service discovered at %s", addr)
+				log.Printf("[PeerPicker] New service discovered at %s", addr)
 			}
 		case clientv3.EventTypeDelete:
 			if client, exists := p.clients[addr]; exists {
 				client.Close()
 				p.remove(addr)
-				logrus.Infof("Service removed at %s", addr)
+				log.Printf("[PeerPicker] Service removed at %s", addr)
 			}
 		}
 	}
@@ -171,7 +170,7 @@ func (p *ClientPicker) fetchAllServices() error {
 		addr := string(kv.Value)
 		if addr != "" && addr != p.selfAddr {
 			p.set(addr)
-			logrus.Infof("Discovered service at %s", addr)
+			log.Printf("[PeerPicker] Discovered service at %s", addr)
 		}
 	}
 	return nil
@@ -182,9 +181,9 @@ func (p *ClientPicker) set(addr string) {
 	if client, err := NewClient(addr, p.svcName, p.etcdCli); err == nil {
 		p.consHash.Add(addr)
 		p.clients[addr] = client
-		logrus.Infof("Successfully created client for %s", addr)
+		log.Printf("[PeerPicker] Successfully created client for %s", addr)
 	} else {
-		logrus.Errorf("Failed to create client for %s: %v", addr, err)
+		log.Printf("[PeerPicker] ERROR: Failed to create client for %s: %v", addr, err)
 	}
 }
 

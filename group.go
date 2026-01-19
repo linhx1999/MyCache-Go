@@ -4,12 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/linhx1999/MyCache-Go/singleflight"
-	"github.com/sirupsen/logrus"
 )
 
 var (
@@ -143,11 +143,11 @@ func NewGroup(name string, cacheBytes int64, getter Getter, opts ...GroupOption)
 	defer groupsMu.Unlock()
 
 	if _, exists := groups[name]; exists {
-		logrus.Warnf("Group with name %s already exists, will be replaced", name)
+		log.Printf("[Group] %s already exists, will be replaced", name)
 	}
 
 	groups[name] = g
-	logrus.Infof("Created cache group [%s] with cacheBytes=%d, expiration=%v", name, cacheBytes, g.expiration)
+	log.Printf("[Group] Created [%s] with cacheBytes=%d, expiration=%v", name, cacheBytes, g.expiration)
 
 	return g
 }
@@ -267,7 +267,7 @@ func (g *Group) syncToPeers(ctx context.Context, op string, key string, value []
 	}
 
 	if err != nil {
-		logrus.Errorf("[KamaCache] failed to sync %s to peer: %v", op, err)
+		log.Printf("[KamaCache] failed to sync %s to peer: %v", op, err)
 	}
 }
 
@@ -279,7 +279,7 @@ func (g *Group) Clear() {
 	}
 
 	g.mainCache.Clear()
-	logrus.Infof("[KamaCache] cleared cache for group [%s]", g.name)
+	log.Printf("[KamaCache] cleared cache for group [%s]", g.name)
 }
 
 // Close 关闭组并释放资源
@@ -299,7 +299,7 @@ func (g *Group) Close() error {
 	delete(groups, g.name)
 	groupsMu.Unlock()
 
-	logrus.Infof("[KamaCache] closed cache group [%s]", g.name)
+	log.Printf("[KamaCache] closed cache group [%s]", g.name)
 	return nil
 }
 
@@ -346,7 +346,7 @@ func (g *Group) loadData(ctx context.Context, key string) (value ByteView, err e
 			}
 
 			atomic.AddInt64(&g.stats.peerMisses, 1)
-			logrus.Warnf("[KamaCache] failed to get from peer: %v", err)
+			log.Printf("[KamaCache] failed to get from peer: %v", err)
 		}
 	}
 
@@ -375,7 +375,7 @@ func (g *Group) RegisterPeers(peers PeerPicker) {
 		panic("RegisterPeers called more than once")
 	}
 	g.peers = peers
-	logrus.Infof("[KamaCache] registered peers for group [%s]", g.name)
+	log.Printf("[KamaCache] registered peers for group [%s]", g.name)
 }
 
 // Stats 返回缓存统计信息
@@ -436,7 +436,7 @@ func DestroyGroup(name string) bool {
 	if g, exists := groups[name]; exists {
 		g.Close()
 		delete(groups, name)
-		logrus.Infof("[KamaCache] destroyed cache group [%s]", name)
+		log.Printf("[KamaCache] destroyed cache group [%s]", name)
 		return true
 	}
 
@@ -451,6 +451,6 @@ func DestroyAllGroups() {
 	for name, g := range groups {
 		g.Close()
 		delete(groups, name)
-		logrus.Infof("[KamaCache] destroyed cache group [%s]", name)
+		log.Printf("[KamaCache] destroyed cache group [%s]", name)
 	}
 }

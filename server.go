@@ -2,16 +2,15 @@ package mycache
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
+	"log"
 	"net"
 	"sync"
 	"time"
 
-	"crypto/tls"
-
 	pb "github.com/linhx1999/MyCache-Go/pb"
 	"github.com/linhx1999/MyCache-Go/registry"
-	"github.com/sirupsen/logrus"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -135,13 +134,13 @@ func (s *Server) Start() error {
 	stopCh := make(chan error)
 	go func() {
 		if err := registry.Register(s.svcName, s.addr, stopCh); err != nil {
-			logrus.Errorf("failed to register service: %v", err)
+			log.Printf("[Server] ERROR: failed to register service: %v", err)
 			close(stopCh)
 			return
 		}
 	}()
 
-	logrus.Infof("Server starting at %s", s.addr)
+	log.Printf("[Server] starting at %s", s.addr)
 	return s.grpcServer.Serve(lis)
 }
 
