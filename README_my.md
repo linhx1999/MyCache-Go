@@ -39,3 +39,9 @@ source $HOME/.bashrc
 ```bash
 docker compose up -d
 ```
+
+## 格式化代码
+
+```bash
+gofmt -w .
+```
