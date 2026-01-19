@@ -26,16 +26,16 @@ var ErrValueRequired = errors.New("value is required")
 // ErrGroupClosed 组已关闭错误
 var ErrGroupClosed = errors.New("cache group is closed")
 
-// Getter 加载键值的回调函数接口
-type Getter interface {
+// DataSource 数据源接口，用于从外部数据源加载数据
+type DataSource interface {
 	Get(ctx context.Context, key string) ([]byte, error)
 }
 
-// GetterFunc 函数类型实现 Getter 接口
-type GetterFunc func(ctx context.Context, key string) ([]byte, error)
+// DataSourceFunc 函数类型实现 DataSource 接口
+type DataSourceFunc func(ctx context.Context, key string) ([]byte, error)
 
-// Get 实现 Getter 接口
-func (f GetterFunc) Get(ctx context.Context, key string) ([]byte, error) {
+// Get 实现 DataSource 接口
+func (f DataSourceFunc) Get(ctx context.Context, key string) ([]byte, error) {
 	return f(ctx, key)
 }
 
@@ -44,7 +44,7 @@ func (f GetterFunc) Get(ctx context.Context, key string) ([]byte, error) {
 // Group 是 MyCache 的核心组件，提供以下功能：
 //   - 缓存命名空间隔离：每个 Group 有独立的名称和缓存空间
 //   - 分布式缓存支持：通过 PeerPicker 与其他节点同步数据
-//   - 数据源回退机制：缓存未命中时通过 Getter 从数据源加载
+//   - 数据源回退机制：缓存未命中时通过 DataSource 从数据源加载
 //   - 防缓存击穿：使用 SingleFlight 确保相同 key 的并发请求只加载一次
 //   - 缓存过期管理：支持 TTL 过期时间
 //   - 统计信息跟踪：记录命中率、加载耗时等指标
@@ -57,7 +57,7 @@ func (f GetterFunc) Get(ctx context.Context, key string) ([]byte, error) {
 //	         ↓
 //	    尝试从远程节点获取（通过 PeerPicker）
 //	         ↓ 未命中
-//	    调用 Getter 回调从数据源加载
+//	    调用 DataSource 回调从数据源加载
 //	         ↓
 //	    存入本地缓存并返回
 //
@@ -71,7 +71,7 @@ func (f GetterFunc) Get(ctx context.Context, key string) ([]byte, error) {
 //   - loader (SingleFlight) 确保并发安全
 type Group struct {
 	name       string              // 组名，用于标识和隔离不同的缓存空间
-	getter     Getter              // 数据源加载接口，缓存未命中时调用
+	dataSource DataSource          // 数据源，缓存未命中时从这里加载数据
 	mainCache  *Cache              // 本地缓存实例，存储实际数据
 	peers      PeerPicker          // 节点选择器，用于分布式缓存中的节点路由
 	loader     *singleflight.Group // SingleFlight 实例，防止缓存击穿
@@ -117,9 +117,9 @@ func WithCacheOptions(opts CacheOptions) GroupOption {
 }
 
 // NewGroup 创建一个新的 Group 实例
-func NewGroup(name string, cacheBytes int64, getter Getter, opts ...GroupOption) *Group {
-	if getter == nil {
-		panic("nil Getter")
+func NewGroup(name string, cacheBytes int64, dataSource DataSource, opts ...GroupOption) *Group {
+	if dataSource == nil {
+		panic("nil DataSource")
 	}
 
 	// 创建默认缓存选项
@@ -127,10 +127,10 @@ func NewGroup(name string, cacheBytes int64, getter Getter, opts ...GroupOption)
 	cacheOpts.MaxBytes = cacheBytes
 
 	g := &Group{
-		name:      name,
-		getter:    getter,
-		mainCache: NewCache(cacheOpts),
-		loader:    &singleflight.Group{},
+		name:       name,
+		dataSource: dataSource,
+		mainCache:  NewCache(cacheOpts),
+		loader:     &singleflight.Group{},
 	}
 
 	// 应用选项
@@ -351,7 +351,7 @@ func (g *Group) loadData(ctx context.Context, key string) (value ByteView, err e
 	}
 
 	// 从数据源加载
-	bytes, err := g.getter.Get(ctx, key)
+	bytes, err := g.dataSource.Get(ctx, key)
 	if err != nil {
 		return ByteView{}, fmt.Errorf("failed to get data: %w", err)
 	}
