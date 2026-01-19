@@ -171,10 +171,10 @@ func (g *Group) Get(ctx context.Context, key string) (ByteView, error) {
 	}
 
 	// 从本地缓存获取
-	view, ok := g.localCache.Get(ctx, key)
+	byteView, ok := g.localCache.Get(ctx, key)
 	if ok {
 		g.stats.localHits.Add(1)
-		return view, nil
+		return byteView, nil
 	}
 
 	g.stats.localMisses.Add(1)
