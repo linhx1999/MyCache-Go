@@ -2,6 +2,8 @@
 
 ## 安装
 
+### 安装Go
+
 ```bash
 rm -rf /usr/local/go && tar -C /usr/local -xzf go1.22.12.linux-amd64.tar.gz
 
@@ -15,7 +17,7 @@ source $HOME/.bashrc
 go version
 ```
 
-### 安装不同版本
+### 安装不同版本的Go
 
 ```bash
 # 安装不同版本
@@ -28,16 +30,6 @@ vim ~/.bashrc
 export PATH=$PATH:$HOME/sdk/go1.21.13/bin
 source $HOME/.profile
 source $HOME/.bashrc
-```
-
-### 安装ETCD
-
-```bash
-docker run -d --name etcd \
--p 2379:2379 \
-quay.io/coreos/etcd:v3.5.0 \
-etcd --advertise-client-urls http://0.0.0.0:2379 \
---listen-client-urls http://0.0.0.0:2379    
 ```
 
 ## 运行
