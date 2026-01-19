@@ -76,7 +76,7 @@ type Group struct {
 	peers      PeerPicker          // 节点选择器，用于分布式缓存中的节点路由
 	loader     *singleflight.Group // SingleFlight 实例，防止缓存击穿
 	expiration time.Duration       // 缓存过期时间，0 表示永不过期
-	closed     int32               // 原子变量，标记组是否已关闭（0=运行中，1=已关闭）
+	closed     atomic.Int32        // 原子变量，标记组是否已关闭（0=运行中，1=已关闭）
 	stats      groupStats          // 统计信息，记录命中率、加载次数等指标
 }
 
@@ -162,7 +162,7 @@ func GetGroup(name string) *Group {
 // Get 从缓存获取数据
 func (g *Group) Get(ctx context.Context, key string) (ByteView, error) {
 	// 检查组是否已关闭
-	if atomic.LoadInt32(&g.closed) == 1 {
+	if g.closed.Load() == 1 {
 		return ByteView{}, ErrGroupClosed
 	}
 
@@ -186,7 +186,7 @@ func (g *Group) Get(ctx context.Context, key string) (ByteView, error) {
 // Set 设置缓存值
 func (g *Group) Set(ctx context.Context, key string, value []byte) error {
 	// 检查组是否已关闭
-	if atomic.LoadInt32(&g.closed) == 1 {
+	if g.closed.Load() == 1 {
 		return ErrGroupClosed
 	}
 
@@ -221,7 +221,7 @@ func (g *Group) Set(ctx context.Context, key string, value []byte) error {
 // Delete 删除缓存值
 func (g *Group) Delete(ctx context.Context, key string) error {
 	// 检查组是否已关闭
-	if atomic.LoadInt32(&g.closed) == 1 {
+	if g.closed.Load() == 1 {
 		return ErrGroupClosed
 	}
 
@@ -274,7 +274,7 @@ func (g *Group) syncToPeers(ctx context.Context, op string, key string, value []
 // Clear 清空缓存
 func (g *Group) Clear() {
 	// 检查组是否已关闭
-	if atomic.LoadInt32(&g.closed) == 1 {
+	if g.closed.Load() == 1 {
 		return
 	}
 
@@ -285,7 +285,7 @@ func (g *Group) Clear() {
 // Close 关闭组并释放资源
 func (g *Group) Close() error {
 	// 如果已经关闭，直接返回
-	if !atomic.CompareAndSwapInt32(&g.closed, 0, 1) {
+	if !g.closed.CompareAndSwap(0, 1) {
 		return nil
 	}
 
@@ -382,7 +382,7 @@ func (g *Group) RegisterPeers(peers PeerPicker) {
 func (g *Group) Stats() map[string]interface{} {
 	stats := map[string]interface{}{
 		"name":          g.name,
-		"closed":        atomic.LoadInt32(&g.closed) == 1,
+		"closed":        g.closed.Load() == 1,
 		"expiration":    g.expiration,
 		"loads":         atomic.LoadInt64(&g.stats.loads),
 		"local_hits":    atomic.LoadInt64(&g.stats.localHits),
