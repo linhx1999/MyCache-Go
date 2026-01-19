@@ -67,12 +67,12 @@ func (f DataSourceFunc) Get(ctx context.Context, key string) ([]byte, error) {
 //
 // 并发安全：
 //   - 使用 atomic 操作管理 closed 状态
-//   - mainCache 内部使用读写锁保护
+//   - localCache 内部使用读写锁保护
 //   - loader (SingleFlight) 确保并发安全
 type Group struct {
 	name       string              // 组名，用于标识和隔离不同的缓存空间
 	dataSource DataSource          // 数据源，缓存未命中时从这里加载数据
-	mainCache  *Cache              // 本地缓存实例，存储实际数据
+	localCache *Cache              // 本地缓存实例，存储实际数据
 	peers      PeerPicker          // 节点选择器，用于分布式缓存中的节点路由
 	loader     *singleflight.Group // SingleFlight 实例，防止缓存击穿
 	expiration time.Duration       // 缓存过期时间，0 表示永不过期
@@ -112,7 +112,7 @@ func WithPeers(peers PeerPicker) GroupOption {
 // WithCacheOptions 设置缓存选项
 func WithCacheOptions(opts CacheOptions) GroupOption {
 	return func(g *Group) {
-		g.mainCache = NewCache(opts)
+		g.localCache = NewCache(opts)
 	}
 }
 
@@ -129,7 +129,7 @@ func NewGroup(name string, cacheBytes int64, dataSource DataSource, opts ...Grou
 	g := &Group{
 		name:       name,
 		dataSource: dataSource,
-		mainCache:  NewCache(cacheOpts),
+		localCache: NewCache(cacheOpts),
 		loader:     &singleflight.Group{},
 	}
 
@@ -171,7 +171,7 @@ func (g *Group) Get(ctx context.Context, key string) (ByteView, error) {
 	}
 
 	// 从本地缓存获取
-	view, ok := g.mainCache.Get(ctx, key)
+	view, ok := g.localCache.Get(ctx, key)
 	if ok {
 		atomic.AddInt64(&g.stats.localHits, 1)
 		return view, nil
@@ -205,9 +205,9 @@ func (g *Group) Set(ctx context.Context, key string, value []byte) error {
 
 	// 设置到本地缓存
 	if g.expiration > 0 {
-		g.mainCache.AddWithExpiration(key, view, time.Now().Add(g.expiration))
+		g.localCache.AddWithExpiration(key, view, time.Now().Add(g.expiration))
 	} else {
-		g.mainCache.Add(key, view)
+		g.localCache.Add(key, view)
 	}
 
 	// 如果不是从其他节点同步过来的请求，且启用了分布式模式，同步到其他节点
@@ -230,7 +230,7 @@ func (g *Group) Delete(ctx context.Context, key string) error {
 	}
 
 	// 从本地缓存删除
-	g.mainCache.Delete(key)
+	g.localCache.Delete(key)
 
 	// 检查是否是从其他节点同步过来的请求
 	isPeerRequest := ctx.Value("from_peer") != nil
@@ -278,7 +278,7 @@ func (g *Group) Clear() {
 		return
 	}
 
-	g.mainCache.Clear()
+	g.localCache.Clear()
 	log.Printf("[KamaCache] cleared cache for group [%s]", g.name)
 }
 
@@ -290,8 +290,8 @@ func (g *Group) Close() error {
 	}
 
 	// 关闭本地缓存
-	if g.mainCache != nil {
-		g.mainCache.Close()
+	if g.localCache != nil {
+		g.localCache.Close()
 	}
 
 	// 从全局组映射中移除
@@ -325,9 +325,9 @@ func (g *Group) load(ctx context.Context, key string) (value ByteView, err error
 
 	// 设置到本地缓存
 	if g.expiration > 0 {
-		g.mainCache.AddWithExpiration(key, view, time.Now().Add(g.expiration))
+		g.localCache.AddWithExpiration(key, view, time.Now().Add(g.expiration))
 	} else {
-		g.mainCache.Add(key, view)
+		g.localCache.Add(key, view)
 	}
 
 	return view, nil
@@ -405,8 +405,8 @@ func (g *Group) Stats() map[string]interface{} {
 	}
 
 	// 添加缓存大小
-	if g.mainCache != nil {
-		cacheStats := g.mainCache.Stats()
+	if g.localCache != nil {
+		cacheStats := g.localCache.Stats()
 		for k, v := range cacheStats {
 			stats["cache_"+k] = v
 		}
