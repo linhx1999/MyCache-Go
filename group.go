@@ -211,7 +211,7 @@ func (g *Group) Set(ctx context.Context, key string, value []byte) error {
 	// 如果不是从其他节点同步过来的请求，且启用了分布式模式，同步到其他节点
 	isPeerRequest := ctx.Value("from_peer") != nil
 	if !isPeerRequest && g.peers != nil {
-		go g.syncToPeers(ctx, "set", key, value)
+		go g.syncToPeers("set", key, value)
 	}
 
 	return nil
@@ -236,14 +236,14 @@ func (g *Group) Delete(ctx context.Context, key string) error {
 
 	// 如果不是从其他节点同步过来的请求，且启用了分布式模式，同步到其他节点
 	if !isPeerRequest && g.peers != nil {
-		go g.syncToPeers(ctx, "delete", key, nil)
+		go g.syncToPeers("delete", key, nil)
 	}
 
 	return nil
 }
 
 // syncToPeers 同步操作到其他节点
-func (g *Group) syncToPeers(_ context.Context, op string, key string, value []byte) {
+func (g *Group) syncToPeers(op string, key string, value []byte) {
 	if g.peers == nil {
 		return
 	}
