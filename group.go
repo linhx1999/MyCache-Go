@@ -82,14 +82,14 @@ type Group struct {
 
 // groupStats 保存组的统计信息
 type groupStats struct {
-	loads        int64 // 加载次数
-	localHits    int64 // 本地缓存命中次数
-	localMisses  int64 // 本地缓存未命中次数
-	peerHits     int64 // 从对等节点获取成功次数
-	peerMisses   int64 // 从对等节点获取失败次数
-	loaderHits   int64 // 从加载器获取成功次数
-	loaderErrors int64 // 从加载器获取失败次数
-	loadDuration int64 // 加载总耗时（纳秒）
+	loads        atomic.Int64 // 加载次数
+	localHits    atomic.Int64 // 本地缓存命中次数
+	localMisses  atomic.Int64 // 本地缓存未命中次数
+	peerHits     atomic.Int64 // 从对等节点获取成功次数
+	peerMisses   atomic.Int64 // 从对等节点获取失败次数
+	loaderHits   atomic.Int64 // 从加载器获取成功次数
+	loaderErrors atomic.Int64 // 从加载器获取失败次数
+	loadDuration atomic.Int64 // 加载总耗时（纳秒）
 }
 
 // GroupOption 定义Group的配置选项
@@ -173,11 +173,11 @@ func (g *Group) Get(ctx context.Context, key string) (ByteView, error) {
 	// 从本地缓存获取
 	view, ok := g.localCache.Get(ctx, key)
 	if ok {
-		atomic.AddInt64(&g.stats.localHits, 1)
+		g.stats.localHits.Add(1)
 		return view, nil
 	}
 
-	atomic.AddInt64(&g.stats.localMisses, 1)
+	g.stats.localMisses.Add(1)
 
 	// 尝试从其他节点获取或加载
 	return g.load(ctx, key)
@@ -313,11 +313,11 @@ func (g *Group) load(ctx context.Context, key string) (value ByteView, err error
 
 	// 记录加载时间
 	loadDuration := time.Since(startTime).Nanoseconds()
-	atomic.AddInt64(&g.stats.loadDuration, loadDuration)
-	atomic.AddInt64(&g.stats.loads, 1)
+	g.stats.loadDuration.Add(loadDuration)
+	g.stats.loads.Add(1)
 
 	if err != nil {
-		atomic.AddInt64(&g.stats.loaderErrors, 1)
+		g.stats.loaderErrors.Add(1)
 		return ByteView{}, err
 	}
 
@@ -341,11 +341,11 @@ func (g *Group) loadData(ctx context.Context, key string) (value ByteView, err e
 		if ok && !isSelf {
 			value, err := g.getFromPeer(ctx, peer, key)
 			if err == nil {
-				atomic.AddInt64(&g.stats.peerHits, 1)
+				g.stats.peerHits.Add(1)
 				return value, nil
 			}
 
-			atomic.AddInt64(&g.stats.peerMisses, 1)
+			g.stats.peerMisses.Add(1)
 			log.Printf("[KamaCache] failed to get from peer: %v", err)
 		}
 	}
@@ -356,7 +356,7 @@ func (g *Group) loadData(ctx context.Context, key string) (value ByteView, err e
 		return ByteView{}, fmt.Errorf("failed to get data: %w", err)
 	}
 
-	atomic.AddInt64(&g.stats.loaderHits, 1)
+	g.stats.loaderHits.Add(1)
 	return ByteView{b: cloneBytes(bytes)}, nil
 }
 
@@ -384,13 +384,13 @@ func (g *Group) Stats() map[string]interface{} {
 		"name":          g.name,
 		"closed":        g.closed.Load() == 1,
 		"expiration":    g.expiration,
-		"loads":         atomic.LoadInt64(&g.stats.loads),
-		"local_hits":    atomic.LoadInt64(&g.stats.localHits),
-		"local_misses":  atomic.LoadInt64(&g.stats.localMisses),
-		"peer_hits":     atomic.LoadInt64(&g.stats.peerHits),
-		"peer_misses":   atomic.LoadInt64(&g.stats.peerMisses),
-		"loader_hits":   atomic.LoadInt64(&g.stats.loaderHits),
-		"loader_errors": atomic.LoadInt64(&g.stats.loaderErrors),
+		"loads":         g.stats.loads.Load(),
+		"local_hits":    g.stats.localHits.Load(),
+		"local_misses":  g.stats.localMisses.Load(),
+		"peer_hits":     g.stats.peerHits.Load(),
+		"peer_misses":   g.stats.peerMisses.Load(),
+		"loader_hits":   g.stats.loaderHits.Load(),
+		"loader_errors": g.stats.loaderErrors.Load(),
 	}
 
 	// 计算各种命中率
@@ -401,7 +401,7 @@ func (g *Group) Stats() map[string]interface{} {
 
 	totalLoads := stats["loads"].(int64)
 	if totalLoads > 0 {
-		stats["avg_load_time_ms"] = float64(atomic.LoadInt64(&g.stats.loadDuration)) / float64(totalLoads) / float64(time.Millisecond)
+		stats["avg_load_time_ms"] = float64(g.stats.loadDuration.Load()) / float64(totalLoads) / float64(time.Millisecond)
 	}
 
 	// 添加缓存大小
