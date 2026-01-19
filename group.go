@@ -267,7 +267,7 @@ func (g *Group) syncToPeers(ctx context.Context, op string, key string, value []
 	}
 
 	if err != nil {
-		log.Printf("[KamaCache] failed to sync %s to peer: %v", op, err)
+		log.Printf("[MyCache] failed to sync %s to peer: %v", op, err)
 	}
 }
 
@@ -279,7 +279,7 @@ func (g *Group) Clear() {
 	}
 
 	g.localCache.Clear()
-	log.Printf("[KamaCache] cleared cache for group [%s]", g.name)
+	log.Printf("[MyCache] cleared cache for group [%s]", g.name)
 }
 
 // Close 关闭组并释放资源
@@ -299,7 +299,7 @@ func (g *Group) Close() error {
 	delete(groups, g.name)
 	groupsMu.Unlock()
 
-	log.Printf("[KamaCache] closed cache group [%s]", g.name)
+	log.Printf("[MyCache] closed cache group [%s]", g.name)
 	return nil
 }
 
@@ -363,7 +363,7 @@ func (g *Group) fetchData(ctx context.Context, key string) (value ByteView, err 
 			}
 
 			g.stats.peerMisses.Add(1)
-			log.Printf("[KamaCache] failed to get from peer: %v", err)
+			log.Printf("[MyCache] failed to get from peer: %v", err)
 		}
 	}
 
@@ -392,7 +392,7 @@ func (g *Group) RegisterPeers(peers PeerPicker) {
 		panic("RegisterPeers called more than once")
 	}
 	g.peers = peers
-	log.Printf("[KamaCache] registered peers for group [%s]", g.name)
+	log.Printf("[MyCache] registered peers for group [%s]", g.name)
 }
 
 // Stats 返回缓存统计信息
@@ -453,7 +453,7 @@ func DestroyGroup(name string) bool {
 	if g, exists := groups[name]; exists {
 		g.Close()
 		delete(groups, name)
-		log.Printf("[KamaCache] destroyed cache group [%s]", name)
+		log.Printf("[MyCache] destroyed cache group [%s]", name)
 		return true
 	}
 
@@ -468,6 +468,6 @@ func DestroyAllGroups() {
 	for name, g := range groups {
 		g.Close()
 		delete(groups, name)
-		log.Printf("[KamaCache] destroyed cache group [%s]", name)
+		log.Printf("[MyCache] destroyed cache group [%s]", name)
 	}
 }
