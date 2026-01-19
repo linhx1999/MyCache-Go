@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
-	"github.com/youngyangyang04/KamaCache-Go/consistenthash"
-	"github.com/youngyangyang04/KamaCache-Go/registry"
+	"github.com/linhx1999/MyCache-Go/consistenthash"
+	"github.com/linhx1999/MyCache-Go/registry"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 

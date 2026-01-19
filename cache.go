@@ -2,7 +2,7 @@ package kamacache
 
 import (
 	"context"
-	"github.com/youngyangyang04/KamaCache-Go/store"
+	"github.com/linhx1999/MyCache-Go/store"
 	"sync"
 	"sync/atomic"
 	"time"

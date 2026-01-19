@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
-	"github.com/youngyangyang04/KamaCache-Go/singleflight"
+	"github.com/linhx1999/MyCache-Go/singleflight"
 )
 
 var (

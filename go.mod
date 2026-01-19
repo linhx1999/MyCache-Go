@@ -1,5 +1,4 @@
-module github.com/youngyangyang04/KamaCache-Go
-
+module github.com/linhx1999/MyCache-Go
 
 go 1.22
 

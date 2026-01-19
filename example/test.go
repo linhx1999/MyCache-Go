@@ -7,7 +7,7 @@ import (
 	"log"
 	"time"
 
-	lcache "github.com/youngyangyang04/KamaCache-Go"
+	lcache "github.com/linhx1999/MyCache-Go"
 )
 
 func main() {
@@ -20,7 +20,7 @@ func main() {
 	log.Printf("[节点%s] 启动，地址: %s", *nodeID, addr)
 
 	// 创建节点
-	node, err := lcache.NewServer(addr, "kama-cache",
+	node, err := lcache.NewServer(addr, "my-cache",
 		lcache.WithEtcdEndpoints([]string{"localhost:2379"}),
 		lcache.WithDialTimeout(5*time.Second),
 	)
