@@ -8,8 +8,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/sirupsen/logrus"
 	"github.com/linhx1999/MyCache-Go/singleflight"
+	"github.com/sirupsen/logrus"
 )
 
 var (

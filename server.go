@@ -9,9 +9,9 @@ import (
 
 	"crypto/tls"
 
-	"github.com/sirupsen/logrus"
 	pb "github.com/linhx1999/MyCache-Go/pb"
 	"github.com/linhx1999/MyCache-Go/registry"
+	"github.com/sirupsen/logrus"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"

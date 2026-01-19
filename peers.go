@@ -8,9 +8,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sirupsen/logrus"
 	"github.com/linhx1999/MyCache-Go/consistenthash"
 	"github.com/linhx1999/MyCache-Go/registry"
+	"github.com/sirupsen/logrus"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
