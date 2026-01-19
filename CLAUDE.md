@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-KamaCache-Go 是一个用 Go 实现的分布式缓存系统，类似于 Redis 的核心功能。这是一个教育性质的分布式缓存项目，涵盖了缓存系统的核心概念和分布式架构设计。
+MyCache-Go 是一个用 Go 实现的分布式缓存系统，类似于 Redis 的核心功能。这是一个教育性质的分布式缓存项目，涵盖了缓存系统的核心概念和分布式架构设计。
 
 ### 核心特性
 - **分布式缓存支持**：基于 gRPC 通信，支持多节点缓存数据同步
@@ -15,7 +15,22 @@ KamaCache-Go 是一个用 Go 实现的分布式缓存系统，类似于 Redis �
 - **高并发优化**：原子操作、读写锁、分桶设计、延迟初始化
 - **缓存过期管理**：支持 TTL 和定时清理机制
 
+### 项目状态
+项目已完成核心功能实现，并进行了多次重构优化以提高代码质量和可读性。最近的改进包括：
+- 从 `Getter` 重命名为 `DataSource` 以更准确描述接口功能
+- 统一使用 `atomic.Int64` 和 `atomic.Int32` 替代手动原子操作
+- 优化变量命名（如 `localCache`, `singleFlightLoader`, `byteView`）
+- 从 `logrus` 迁移到标准库 `log` 以减少依赖
+- 统一错误消息前缀为 "cache:"
+- 统一日志前缀为 "MyCache"
+
 ## 构建和测试
+
+### 环境要求
+
+- **Go 版本**: 1.22 或更高版本（项目使用 Go 1.22.11 toolchain）
+- **etcd**: 分布式功能需要 etcd（使用 Docker Compose 启动）
+- **protobuf**: 需要安装 `protoc` 编译器（如果修改 proto 文件）
 
 ### 环境准备
 
@@ -55,6 +70,21 @@ go run example/test.go -port 8003 -node C
 
 ```bash
 protoc --go_out=. --go-grpc_out=. pb/kama.proto
+```
+
+### 代码格式化
+
+项目使用标准的 Go 代码格式：
+
+```bash
+# 格式化所有代码
+go fmt ./...
+
+# 或使用 goimports（推荐）
+goimports -w .
+
+# 运行 gofmt 检查
+gofmt -l .
 ```
 
 ## 架构概览
@@ -312,7 +342,7 @@ gRPC 服务端和客户端实现。
 ## 项目文件结构
 
 ```
-KamaCache-Go/
+MyCache-Go/
 ├── pb/                      # Protocol Buffers 定义和生成代码
 │   ├── kama.proto          # gRPC 服务定义
 │   ├── kama.pb.go          # 生成的消息类型
@@ -342,3 +372,29 @@ KamaCache-Go/
 ├── go.mod                 # Go 模块定义
 └── CLAUDE.md              # 本文档
 ```
+
+## 代码规范说明
+
+项目遵循以下代码规范（基于 git 提交历史）：
+
+1. **命名规范**：
+   - 使用有意义的变量名，如 `localCache` 而非 `mainCache`
+   - 使用 `singleFlightLoader` 而非 `loader` 以提高可读性
+   - 使用 `byteView` 而非 `view` 以明确类型
+
+2. **错误处理**：
+   - 统一错误消息前缀为 `"cache:"`
+   - 定义清晰的错误类型（`ErrKeyRequired`, `ErrValueRequired`, `ErrGroupClosed`）
+
+3. **并发控制**：
+   - 优先使用 `atomic.Int64` 和 `atomic.Int32` 替代手动原子操作
+   - 使用 `sync.RWMutex` 保护共享数据
+   - 避免在热路径中使用锁
+
+4. **日志管理**：
+   - 使用标准库 `log` 而非第三方库（已从 logrus 迁移到标准库）
+   - 统一日志前缀为 "MyCache"（而非 "KamaCache"）
+
+5. **接口命名**：
+   - 使用 `DataSource` 而非 `Getter` 以更准确描述功能
+   - 保持接口简洁明了
