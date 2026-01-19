@@ -94,7 +94,7 @@ Get(key) → 本地缓存命中 → 返回数据
          ↓
     尝试从远程节点获取（PeerPicker）
          ↓ 未命中
-    调用 Getter 回调从数据源加载
+    调用 DataSource 回调从数据源加载
          ↓
     存入本地缓存并返回
 ```
@@ -244,11 +244,11 @@ gRPC 服务端和客户端实现。
 
 ## 关键设计模式
 
-1. **接口模式**：Store、Getter、PeerPicker 接口便于扩展
+1. **接口模式**：Store、DataSource、PeerPicker 接口便于扩展
 2. **选项模式**：使用函数式选项（Functional Options）配置组件
 3. **延迟初始化**：Cache 使用双重检查锁定延迟创建 Store
 4. **命名空间隔离**：Group 提供多个独立的缓存空间
-5. **回调机制**：OnEvicted、Getter 回调提供扩展点
+5. **回调机制**：OnEvicted、DataSource 回调提供扩展点
 
 ## 重要注意事项
 
