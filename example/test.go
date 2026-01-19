@@ -90,8 +90,8 @@ func createPeerPicker(addr, nodeID string) *myCache.ClientPicker {
 //   - *myCache.Group: 已初始化的缓存组实例
 //
 // 核心逻辑:
-//   1. 定义 Getter 回调函数：实现缓存未命中时的数据源加载逻辑
-//   2. 创建 Group 实例：使用全局配置的组名和最大缓存容量
+//  1. 定义 Getter 回调函数：实现缓存未命中时的数据源加载逻辑
+//  2. 创建 Group 实例：使用全局配置的组名和最大缓存容量
 //
 // 注意事项:
 //   - Getter 是分布式缓存的数据源回退机制
