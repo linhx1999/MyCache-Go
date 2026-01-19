@@ -180,7 +180,7 @@ func (g *Group) Get(ctx context.Context, key string) (ByteView, error) {
 	g.stats.localMisses.Add(1)
 
 	// 尝试从其他节点获取或加载
-	return g.load(ctx, key)
+	return g.loadOnce(ctx, key)
 }
 
 // Set 设置缓存值
@@ -303,17 +303,22 @@ func (g *Group) Close() error {
 	return nil
 }
 
-// load 加载数据
-func (g *Group) load(ctx context.Context, key string) (value ByteView, err error) {
-	// 使用 singleflight 确保并发请求只加载一次
+// loadOnce 使用 SingleFlight 机制加载数据，防止缓存击穿
+// 该方法确保相同 key 的并发请求只会执行一次加载操作
+// 加载完成后会将数据存入本地缓存
+func (g *Group) loadOnce(ctx context.Context, key string) (ByteView, error) {
 	startTime := time.Now()
-	viewi, err := g.loader.Do(key, func() (interface{}, error) {
-		return g.loadData(ctx, key)
+
+	// 使用 SingleFlight.Do 确保并发请求只执行一次加载
+	// Do 方法会阻塞所有相同 key 的请求，直到第一个请求完成
+	// 所有等待的请求将共享同一个结果
+	result, err := g.loader.Do(key, func() (interface{}, error) {
+		return g.fetchData(ctx, key)
 	})
 
-	// 记录加载时间
-	loadDuration := time.Since(startTime).Nanoseconds()
-	g.stats.loadDuration.Add(loadDuration)
+	// 记录加载统计信息
+	duration := time.Since(startTime).Nanoseconds()
+	g.stats.loadDuration.Add(duration)
 	g.stats.loads.Add(1)
 
 	if err != nil {
@@ -321,25 +326,37 @@ func (g *Group) load(ctx context.Context, key string) (value ByteView, err error
 		return ByteView{}, err
 	}
 
-	view := viewi.(ByteView)
-
-	// 设置到本地缓存
-	if g.expiration > 0 {
-		g.localCache.AddWithExpiration(key, view, time.Now().Add(g.expiration))
-	} else {
-		g.localCache.Add(key, view)
+	// 类型断言：将 interface{} 转换为 ByteView
+	view, ok := result.(ByteView)
+	if !ok {
+		g.stats.loaderErrors.Add(1)
+		return ByteView{}, fmt.Errorf("unexpected type: %T", result)
 	}
+
+	// 将加载的数据存入本地缓存，便于下次快速访问
+	g.saveToCache(key, view)
 
 	return view, nil
 }
 
-// loadData 实际加载数据的方法
-func (g *Group) loadData(ctx context.Context, key string) (value ByteView, err error) {
+// saveToCache 将数据存入本地缓存
+func (g *Group) saveToCache(key string, view ByteView) {
+	if g.expiration > 0 {
+		expirationTime := time.Now().Add(g.expiration)
+		g.localCache.AddWithExpiration(key, view, expirationTime)
+	} else {
+		g.localCache.Add(key, view)
+	}
+}
+
+// fetchData 从远程节点或数据源获取数据
+// 首先尝试从远程节点获取，失败则从本地数据源加载
+func (g *Group) fetchData(ctx context.Context, key string) (value ByteView, err error) {
 	// 尝试从远程节点获取
 	if g.peers != nil {
 		peer, ok, isSelf := g.peers.PickPeer(key)
 		if ok && !isSelf {
-			value, err := g.getFromPeer(ctx, peer, key)
+			value, err := g.fetchFromPeer(ctx, peer, key)
 			if err == nil {
 				g.stats.peerHits.Add(1)
 				return value, nil
@@ -360,8 +377,8 @@ func (g *Group) loadData(ctx context.Context, key string) (value ByteView, err e
 	return ByteView{b: cloneBytes(bytes)}, nil
 }
 
-// getFromPeer 从其他节点获取数据
-func (g *Group) getFromPeer(ctx context.Context, peer Peer, key string) (ByteView, error) {
+// fetchFromPeer 从其他节点获取数据
+func (g *Group) fetchFromPeer(ctx context.Context, peer Peer, key string) (ByteView, error) {
 	bytes, err := peer.Get(g.name, key)
 	if err != nil {
 		return ByteView{}, fmt.Errorf("failed to get from peer: %w", err)
