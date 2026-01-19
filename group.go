@@ -327,25 +327,25 @@ func (g *Group) loadOnce(ctx context.Context, key string) (ByteView, error) {
 	}
 
 	// 类型断言：将 interface{} 转换为 ByteView
-	view, ok := result.(ByteView)
+	byteView, ok := result.(ByteView)
 	if !ok {
 		g.stats.loaderErrors.Add(1)
 		return ByteView{}, fmt.Errorf("unexpected type: %T", result)
 	}
 
 	// 将加载的数据存入本地缓存，便于下次快速访问
-	g.saveToCache(key, view)
+	g.saveToLocal(key, byteView)
 
-	return view, nil
+	return byteView, nil
 }
 
-// saveToCache 将数据存入本地缓存
-func (g *Group) saveToCache(key string, view ByteView) {
+// saveToLocal 将数据存入本地缓存
+func (g *Group) saveToLocal(key string, byteView ByteView) {
 	if g.expiration > 0 {
 		expirationTime := time.Now().Add(g.expiration)
-		g.localCache.AddWithExpiration(key, view, expirationTime)
+		g.localCache.AddWithExpiration(key, byteView, expirationTime)
 	} else {
-		g.localCache.Add(key, view)
+		g.localCache.Add(key, byteView)
 	}
 }
 
