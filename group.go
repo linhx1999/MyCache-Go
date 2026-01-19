@@ -68,16 +68,16 @@ func (f DataSourceFunc) Get(ctx context.Context, key string) ([]byte, error) {
 // 并发安全：
 //   - 使用 atomic 操作管理 closed 状态
 //   - localCache 内部使用读写锁保护
-//   - loader (SingleFlight) 确保并发安全
+//   - singleFlightLoader (SingleFlight) 确保并发安全
 type Group struct {
-	name       string              // 组名，用于标识和隔离不同的缓存空间
-	dataSource DataSource          // 数据源，缓存未命中时从这里加载数据
-	localCache *Cache              // 本地缓存实例，存储实际数据
-	peers      PeerPicker          // 节点选择器，用于分布式缓存中的节点路由
-	loader     *singleflight.Group // SingleFlight 实例，防止缓存击穿
-	expiration time.Duration       // 缓存过期时间，0 表示永不过期
-	closed     atomic.Int32        // 原子变量，标记组是否已关闭（0=运行中，1=已关闭）
-	stats      groupStats          // 统计信息，记录命中率、加载次数等指标
+	name               string              // 组名，用于标识和隔离不同的缓存空间
+	dataSource         DataSource          // 数据源，缓存未命中时从这里加载数据
+	localCache         *Cache              // 本地缓存实例，存储实际数据
+	peers              PeerPicker          // 节点选择器，用于分布式缓存中的节点路由
+	singleFlightLoader *singleflight.Group // SingleFlight 加载器，防止缓存击穿
+	expiration         time.Duration       // 缓存过期时间，0 表示永不过期
+	closed             atomic.Int32        // 原子变量，标记组是否已关闭（0=运行中，1=已关闭）
+	stats              groupStats          // 统计信息，记录命中率、加载次数等指标
 }
 
 // groupStats 保存组的统计信息
@@ -127,10 +127,10 @@ func NewGroup(name string, cacheBytes int64, dataSource DataSource, opts ...Grou
 	cacheOpts.MaxBytes = cacheBytes
 
 	g := &Group{
-		name:       name,
-		dataSource: dataSource,
-		localCache: NewCache(cacheOpts),
-		loader:     &singleflight.Group{},
+		name:               name,
+		dataSource:         dataSource,
+		localCache:         NewCache(cacheOpts),
+		singleFlightLoader: &singleflight.Group{},
 	}
 
 	// 应用选项
@@ -312,7 +312,7 @@ func (g *Group) loadOnce(ctx context.Context, key string) (ByteView, error) {
 	// 使用 SingleFlight.Do 确保并发请求只执行一次加载
 	// Do 方法会阻塞所有相同 key 的请求，直到第一个请求完成
 	// 所有等待的请求将共享同一个结果
-	result, err := g.loader.Do(key, func() (interface{}, error) {
+	result, err := g.singleFlightLoader.Do(key, func() (interface{}, error) {
 		return g.fetchData(ctx, key)
 	})
 
