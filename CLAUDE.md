@@ -305,8 +305,8 @@ gRPC 服务端和客户端实现。
 
 ### 添加新的缓存淘汰策略
 1. 在 `store/` 包中实现 Store 接口（参考 `lru.go` 或 `lru2.go`）
-2. 在 `store/store.go` 的 `CacheType` 枚举中添加新类型
-3. 在 `store/store.go` 的 `NewStore` 函数中添加创建逻辑
+2. 在 `store/types.go` 的 `CacheType` 枚举中添加新类型
+3. 在 `store/types.go` 的 `NewStore` 函数中添加创建逻辑
 4. 编写单元测试验证功能正确性
 
 ### 添加新的节点选择策略
@@ -355,7 +355,7 @@ MyCache-Go/
 ├── singleflight/           # SingleFlight 并发控制
 │   └── singleflight.go     # 防止缓存击穿
 ├── store/                  # 存储引擎实现
-│   ├── store.go           # Store 接口和工厂
+│   ├── types.go           # Store 接口和工厂
 │   ├── lru.go             # LRU 缓存实现
 │   ├── lru2.go            # LRU2 两级缓存实现
 │   └── lru2_test.go       # LRU2 单元测试
