@@ -14,9 +14,9 @@ type lruCache struct {
 	expirationMap   map[string]time.Time     // 过期时间映射
 	maxBytes        int64                    // 最大允许字节数
 	usedBytes       int64                    // 当前使用的字节数
-	onEvicted       func(key string, value Value)
-	cleanupInterval time.Duration
-	cleanupTicker   *time.Ticker
+	onEvicted       func(key string, value Value) // 淘汰回调函数，当缓存项被淘汰时调用
+	cleanupInterval time.Duration               // 定期清理过期缓存的时间间隔
+	cleanupTicker   *time.Ticker                // 定时器，用于触发定期清理任务
 	doneCh          chan struct{} // 用于优雅关闭清理协程
 }
 
