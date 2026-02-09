@@ -35,26 +35,3 @@ type Options struct {
 	CleanupInterval time.Duration
 	OnEvicted       func(key string, value Value)
 }
-
-func NewOptions() Options {
-	return Options{
-		MaxBytes:        8192,
-		BucketCount:     16,
-		CapPerBucket:    512,
-		Level2Cap:       256,
-		CleanupInterval: time.Minute,
-		OnEvicted:       nil,
-	}
-}
-
-// NewStore 创建缓存存储实例
-func NewStore(cacheType CacheType, opts Options) Store {
-	switch cacheType {
-	case LRU2:
-		return newLRU2Cache(opts)
-	case LRU:
-		return newLRUCache(opts)
-	default:
-		return newLRUCache(opts)
-	}
-}
