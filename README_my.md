@@ -34,11 +34,21 @@ source $HOME/.bashrc
 
 ## 运行
 
-### 启动容器
+### 启动ETCD
 
 ```bash
 docker compose up -d
 ```
+
+### 运行示例
+
+```bash
+go run example/test.go -port 8001 -node A
+go run example/test.go -port 8002 -node B
+go run example/test.go -port 8003 -node C
+```
+
+
 
 ## 格式化代码
 
