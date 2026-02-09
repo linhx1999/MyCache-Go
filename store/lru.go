@@ -9,15 +9,15 @@ import (
 // lruCache 是基于标准库 list 的 LRU 缓存实现
 type lruCache struct {
 	mu              sync.RWMutex
-	lruList         *list.List               // 双向链表，用于维护 LRU 顺序
-	entries         map[string]*list.Element // 键到链表节点的映射
-	expirationMap   map[string]time.Time     // 过期时间映射
-	maxBytes        int64                    // 最大允许字节数
-	usedBytes       int64                    // 当前使用的字节数
+	lruList         *list.List                    // 双向链表，用于维护 LRU 顺序
+	entries         map[string]*list.Element      // 键到链表节点的映射
+	expirationMap   map[string]time.Time          // 过期时间映射
+	maxBytes        int64                         // 最大允许字节数
+	usedBytes       int64                         // 当前使用的字节数
 	onEvicted       func(key string, value Value) // 淘汰回调函数，当缓存项被淘汰时调用
-	cleanupInterval time.Duration               // 定期清理过期缓存的时间间隔
-	cleanupTicker   *time.Ticker                // 定时器，用于触发定期清理任务
-	doneCh          chan struct{} // 用于优雅关闭清理协程
+	cleanupInterval time.Duration                 // 定期清理过期缓存的时间间隔
+	cleanupTicker   *time.Ticker                  // 定时器，用于触发定期清理任务
+	doneCh          chan struct{}                 // 用于优雅关闭清理协程
 }
 
 // lruEntry 表示缓存中的一个条目
@@ -34,12 +34,24 @@ func newLRUCache(opts Options) *lruCache {
 		cleanupInterval = time.Minute
 	}
 
+	// 设置默认最大字节数
+	maxBytes := opts.MaxBytes
+	if maxBytes <= 0 {
+		maxBytes = 8 * 1024 * 1024 // 8MB
+	}
+
+	// 设置淘汰回调函数，nil 时使用空函数以避免运行时检查
+	onEvicted := opts.OnEvicted
+	if onEvicted == nil {
+		onEvicted = noopOnEvicted
+	}
+
 	c := &lruCache{
 		lruList:         list.New(),
 		entries:         make(map[string]*list.Element),
 		expirationMap:   make(map[string]time.Time),
-		maxBytes:        opts.MaxBytes,
-		onEvicted:       opts.OnEvicted,
+		maxBytes:        maxBytes,
+		onEvicted:       onEvicted,
 		cleanupInterval: cleanupInterval,
 		doneCh:          make(chan struct{}),
 	}
@@ -148,12 +160,10 @@ func (c *lruCache) Clear() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// 如果设置了回调函数，遍历所有项调用回调
-	if c.onEvicted != nil {
-		for _, elem := range c.entries {
-			entry := elem.Value.(*lruEntry)
-			c.onEvicted(entry.key, entry.value)
-		}
+	// 遍历所有项调用回调函数（onEvicted 保证不为 nil）
+	for _, elem := range c.entries {
+		entry := elem.Value.(*lruEntry)
+		c.onEvicted(entry.key, entry.value)
 	}
 
 	c.lruList.Init()
@@ -177,9 +187,8 @@ func (c *lruCache) removeElement(elem *list.Element) {
 	delete(c.expirationMap, entry.key)
 	c.usedBytes -= int64(len(entry.key) + entry.value.Len())
 
-	if c.onEvicted != nil {
-		c.onEvicted(entry.key, entry.value)
-	}
+	// 调用淘汰回调函数（onEvicted 保证不为 nil）
+	c.onEvicted(entry.key, entry.value)
 }
 
 // evict 清理过期和超出内存限制的缓存，调用此方法前必须持有锁

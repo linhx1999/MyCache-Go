@@ -29,11 +29,17 @@ func newLRU2Cache(opts Options) *lru2Store {
 		opts.CleanupInterval = time.Minute
 	}
 
+	// 设置淘汰回调函数，nil 时使用空函数以避免运行时检查
+	onEvicted := opts.OnEvicted
+	if onEvicted == nil {
+		onEvicted = noopOnEvicted
+	}
+
 	mask := maskOfNextPowOf2(opts.BucketCount)
 	s := &lru2Store{
 		locks:       make([]sync.Mutex, mask+1),
 		caches:      make([][2]*cache, mask+1),
-		onEvicted:   opts.OnEvicted,
+		onEvicted:   onEvicted,
 		cleanupTick: time.NewTicker(opts.CleanupInterval),
 		mask:        int32(mask),
 	}
@@ -258,6 +264,7 @@ func (c *cache) put(key string, val Value, expireAt int64, onEvicted func(string
 
 	if c.last == uint16(cap(c.m)) {
 		tail := &c.m[c.dlnk[0][p]-1]
+		// 调用淘汰回调函数（需要检查 nil，因为这是内部方法）
 		if onEvicted != nil && (*tail).expireAt > 0 {
 			onEvicted((*tail).k, (*tail).v)
 		}
@@ -348,7 +355,8 @@ func (s *lru2Store) delete(key string, idx int32) bool {
 	n2, s2, _ := s.caches[idx][1].del(key)
 	deleted := s1 > 0 || s2 > 0
 
-	if deleted && s.onEvicted != nil {
+	// 调用淘汰回调函数（onEvicted 保证不为 nil，因为已在初始化时设置）
+	if deleted {
 		if n1 != nil && n1.v != nil {
 			s.onEvicted(key, n1.v)
 		} else if n2 != nil && n2.v != nil {

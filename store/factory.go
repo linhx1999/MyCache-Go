@@ -2,6 +2,9 @@ package store
 
 import "time"
 
+// noopOnEvicted 空淘汰回调函数，用作默认值以避免 nil 检查
+func noopOnEvicted(key string, value Value) {}
+
 // NewOptions 创建带有默认值的缓存配置选项
 func NewOptions() Options {
 	return Options{
@@ -10,7 +13,7 @@ func NewOptions() Options {
 		CapPerBucket:    512,
 		Level2Cap:       256,
 		CleanupInterval: time.Minute,
-		OnEvicted:       nil,
+		OnEvicted:       noopOnEvicted,
 	}
 }
 
