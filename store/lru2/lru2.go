@@ -188,7 +188,7 @@ func (c *Cache) Close() {
 }
 
 // _get 内部方法，从指定级别的缓存获取项
-func (c *Cache) _get(key string, idx, level int32) *lru2Entry {
+func (c *Cache) _get(key string, idx, level int32) *cacheEntry {
 	n := c.caches[idx][level].get(key)
 	if n != nil {
 		currentTime := now()
@@ -262,8 +262,8 @@ func (c *Cache) cleanupLoop() {
 
 // ============ 内部类型和方法 ============
 
-// lru2Entry 表示 LRU2 缓存中的一个条目
-type lru2Entry struct {
+// cacheEntry 表示 LRU2 缓存中的一个条目
+type cacheEntry struct {
 	key      string
 	value    common.Value
 	expireAt int64 // 过期时间戳，expireAt = 0 表示已删除
@@ -273,7 +273,7 @@ type lru2Entry struct {
 type cache struct {
 	// dlnk[0]是哨兵节点，记录链表头尾，dlnk[0][p]存储尾部索引，dlnk[0][n]存储头部索引
 	dlnk [][2]uint16            // 双向链表，0 表示前驱，1 表示后继
-	m    []lru2Entry             // 预分配内存存储节点
+	m    []cacheEntry             // 预分配内存存储节点
 	hmap map[string]uint16       // 键到节点索引的映射
 	last uint16                  // 最后一个节点元素的索引
 }
@@ -281,7 +281,7 @@ type cache struct {
 func createCache(cap uint16) *cache {
 	return &cache{
 		dlnk: make([][2]uint16, cap+1),
-		m:    make([]lru2Entry, cap),
+		m:    make([]cacheEntry, cap),
 		hmap: make(map[string]uint16, cap),
 		last: 0,
 	}
@@ -328,7 +328,7 @@ func (c *cache) put(key string, val common.Value, expireAt int64, onEvicted func
 }
 
 // get 从缓存中获取键对应的节点和状态
-func (c *cache) get(key string) *lru2Entry {
+func (c *cache) get(key string) *cacheEntry {
 	if idx, ok := c.hmap[key]; ok {
 		c.adjust(idx, p, n)
 		return &c.m[idx-1]
@@ -337,7 +337,7 @@ func (c *cache) get(key string) *lru2Entry {
 }
 
 // del 从缓存中删除键对应的项
-func (c *cache) del(key string) (*lru2Entry, int, int64) {
+func (c *cache) del(key string) (*cacheEntry, int, int64) {
 	if idx, ok := c.hmap[key]; ok && c.m[idx-1].expireAt > 0 {
 		e := c.m[idx-1].expireAt
 		c.m[idx-1].expireAt = 0 // 标记为已删除
