@@ -63,10 +63,10 @@ func (c *Cache) Get(key string) (common.Value, bool) {
 	currentTime := now()
 
 	// 首先检查一级缓存
-	n1, status1, expireAt := c.caches[idx][0].del(key)
+	n1, status1, deadline := c.caches[idx][0].del(key)
 	if status1 > 0 {
 		// 从一级缓存找到项目
-		if expireAt > 0 && currentTime >= expireAt {
+		if deadline > 0 && currentTime >= deadline {
 			// 项目已过期，删除它
 			c.delete(key, idx)
 			fmt.Println("找到项目已过期，删除它")
@@ -74,7 +74,7 @@ func (c *Cache) Get(key string) (common.Value, bool) {
 		}
 
 		// 项目有效，将其移至二级缓存
-		c.caches[idx][1].put(key, n1.value, expireAt, c.onEvicted)
+		c.caches[idx][1].put(key, n1.value, deadline, c.onEvicted)
 		fmt.Println("项目有效，将其移至二级缓存")
 		return n1.value, true
 	}
@@ -82,7 +82,7 @@ func (c *Cache) Get(key string) (common.Value, bool) {
 	// 一级缓存未找到，检查二级缓存
 	n2 := c._get(key, idx, 1)
 	if n2 != nil {
-		if n2.expireAt > 0 && currentTime >= n2.expireAt {
+		if n2.deadline > 0 && currentTime >= n2.deadline {
 			// 项目已过期，删除它
 			c.delete(key, idx)
 			fmt.Println("找到项目已过期，删除它")
@@ -103,10 +103,10 @@ func (c *Cache) Set(key string, value common.Value) error {
 // SetWithExpiration 添加或更新缓存项，并设置过期时间
 func (c *Cache) SetWithExpiration(key string, value common.Value, expiration time.Duration) error {
 	// 计算过期时间 - 确保单位一致
-	expireAt := int64(0)
+	deadline := int64(0)
 	if expiration > 0 {
 		// now() 返回纳秒时间戳，确保 expiration 也是纳秒单位
-		expireAt = now() + int64(expiration.Nanoseconds())
+		deadline = now() + int64(expiration.Nanoseconds())
 	}
 
 	idx := hashBKRD(key) & c.mask
@@ -114,7 +114,7 @@ func (c *Cache) SetWithExpiration(key string, value common.Value, expiration tim
 	defer c.locks[idx].Unlock()
 
 	// 放入一级缓存
-	c.caches[idx][0].put(key, value, expireAt, c.onEvicted)
+	c.caches[idx][0].put(key, value, deadline, c.onEvicted)
 
 	return nil
 }
@@ -135,11 +135,11 @@ func (c *Cache) Clear() {
 	for i := range c.caches {
 		c.locks[i].Lock()
 
-		c.caches[i][0].walk(func(key string, value common.Value, expireAt int64) bool {
+		c.caches[i][0].walk(func(key string, value common.Value, deadline int64) bool {
 			keys = append(keys, key)
 			return true
 		})
-		c.caches[i][1].walk(func(key string, value common.Value, expireAt int64) bool {
+		c.caches[i][1].walk(func(key string, value common.Value, deadline int64) bool {
 			// 检查键是否已经收集（避免重复）
 			for _, k := range keys {
 				if key == k {
@@ -165,11 +165,11 @@ func (c *Cache) Len() int {
 	for i := range c.caches {
 		c.locks[i].Lock()
 
-		c.caches[i][0].walk(func(key string, value common.Value, expireAt int64) bool {
+		c.caches[i][0].walk(func(key string, value common.Value, deadline int64) bool {
 			count++
 			return true
 		})
-		c.caches[i][1].walk(func(key string, value common.Value, expireAt int64) bool {
+		c.caches[i][1].walk(func(key string, value common.Value, deadline int64) bool {
 			count++
 			return true
 		})
@@ -192,7 +192,7 @@ func (c *Cache) _get(key string, idx, level int32) *cacheEntry {
 	n := c.caches[idx][level].get(key)
 	if n != nil {
 		currentTime := now()
-		if n.expireAt <= 0 || currentTime >= n.expireAt {
+		if n.deadline <= 0 || currentTime >= n.deadline {
 			// 过期或已删除
 			return nil
 		}
@@ -231,15 +231,15 @@ func (c *Cache) cleanupLoop() {
 			// 检查并清理过期项目
 			var expiredKeys []string
 
-			c.caches[i][0].walk(func(key string, value common.Value, expireAt int64) bool {
-				if expireAt > 0 && currentTime >= expireAt {
+			c.caches[i][0].walk(func(key string, value common.Value, deadline int64) bool {
+				if deadline > 0 && currentTime >= deadline {
 					expiredKeys = append(expiredKeys, key)
 				}
 				return true
 			})
 
-			c.caches[i][1].walk(func(key string, value common.Value, expireAt int64) bool {
-				if expireAt > 0 && currentTime >= expireAt {
+			c.caches[i][1].walk(func(key string, value common.Value, deadline int64) bool {
+				if deadline > 0 && currentTime >= deadline {
 					for _, k := range expiredKeys {
 						if key == k {
 							// 避免重复
@@ -266,7 +266,7 @@ func (c *Cache) cleanupLoop() {
 type cacheEntry struct {
 	key      string
 	value    common.Value
-	expireAt int64 // 过期时间戳，expireAt = 0 表示已删除
+	deadline int64 // 过期时间戳，deadline = 0 表示已删除
 }
 
 // cache 内部缓存核心实现，包含双向链表和节点存储
@@ -288,9 +288,9 @@ func createCache(cap uint16) *cache {
 }
 
 // put 向缓存中添加项，如果是新增返回 1，更新返回 0
-func (c *cache) put(key string, val common.Value, expireAt int64, onEvicted func(string, common.Value)) int {
+func (c *cache) put(key string, val common.Value, deadline int64, onEvicted func(string, common.Value)) int {
 	if idx, ok := c.hmap[key]; ok {
-		c.m[idx-1].value, c.m[idx-1].expireAt = val, expireAt
+		c.m[idx-1].value, c.m[idx-1].deadline = val, deadline
 		c.adjust(idx, p, n) // 刷新到链表头部
 		return 0
 	}
@@ -298,12 +298,12 @@ func (c *cache) put(key string, val common.Value, expireAt int64, onEvicted func
 	if c.last == uint16(cap(c.m)) {
 		tail := &c.m[c.dlnk[0][p]-1]
 		// 调用淘汰回调函数
-		if onEvicted != nil && (*tail).expireAt > 0 {
+		if onEvicted != nil && (*tail).deadline > 0 {
 			onEvicted((*tail).key, (*tail).value)
 		}
 
 		delete(c.hmap, (*tail).key)
-		c.hmap[key], (*tail).key, (*tail).value, (*tail).expireAt = c.dlnk[0][p], key, val, expireAt
+		c.hmap[key], (*tail).key, (*tail).value, (*tail).deadline = c.dlnk[0][p], key, val, deadline
 		c.adjust(c.dlnk[0][p], p, n)
 
 		return 1
@@ -319,7 +319,7 @@ func (c *cache) put(key string, val common.Value, expireAt int64, onEvicted func
 	// 初始化新节点并更新链表指针
 	c.m[c.last-1].key = key
 	c.m[c.last-1].value = val
-	c.m[c.last-1].expireAt = expireAt
+	c.m[c.last-1].deadline = deadline
 	c.dlnk[c.last] = [2]uint16{0, c.dlnk[0][n]}
 	c.hmap[key] = c.last
 	c.dlnk[0][n] = c.last
@@ -338,20 +338,20 @@ func (c *cache) get(key string) *cacheEntry {
 
 // del 从缓存中删除键对应的项
 func (c *cache) del(key string) (*cacheEntry, int, int64) {
-	if idx, ok := c.hmap[key]; ok && c.m[idx-1].expireAt > 0 {
-		e := c.m[idx-1].expireAt
-		c.m[idx-1].expireAt = 0 // 标记为已删除
+	if idx, ok := c.hmap[key]; ok && c.m[idx-1].deadline > 0 {
+		d := c.m[idx-1].deadline
+		c.m[idx-1].deadline = 0 // 标记为已删除
 		c.adjust(idx, n, p)     // 移动到链表尾部
-		return &c.m[idx-1], 1, e
+		return &c.m[idx-1], 1, d
 	}
 
 	return nil, 0, 0
 }
 
 // walk 遍历缓存中的所有有效项
-func (c *cache) walk(walker func(key string, value common.Value, expireAt int64) bool) {
+func (c *cache) walk(walker func(key string, value common.Value, deadline int64) bool) {
 	for idx := c.dlnk[0][n]; idx != 0; idx = c.dlnk[idx][n] {
-		if c.m[idx-1].expireAt > 0 && !walker(c.m[idx-1].key, c.m[idx-1].value, c.m[idx-1].expireAt) {
+		if c.m[idx-1].deadline > 0 && !walker(c.m[idx-1].key, c.m[idx-1].value, c.m[idx-1].deadline) {
 			return
 		}
 	}
