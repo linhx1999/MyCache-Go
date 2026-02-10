@@ -31,7 +31,7 @@ func createCache(cap uint16) *cache {
 func (c *cache) put(key string, val common.Value, deadline int64, onEvicted func(string, common.Value)) int {
 	if idx, ok := c.keyToIndex[key]; ok {
 		c.entries[idx-1].value, c.entries[idx-1].deadline = val, deadline
-		c.adjust(idx, prev, next) // 刷新到链表头部
+		c.adjust(idx, head) // 刷新到链表头部
 		return 0
 	}
 
@@ -44,7 +44,7 @@ func (c *cache) put(key string, val common.Value, deadline int64, onEvicted func
 
 		delete(c.keyToIndex, (*tail).key)
 		c.keyToIndex[key], (*tail).key, (*tail).value, (*tail).deadline = c.links[0][prev], key, val, deadline
-		c.adjust(c.links[0][prev], prev, next)
+		c.adjust(c.links[0][prev], head)
 
 		return 1
 	}
@@ -70,7 +70,7 @@ func (c *cache) put(key string, val common.Value, deadline int64, onEvicted func
 // get 从缓存中获取键对应的节点和状态
 func (c *cache) get(key string) *cacheEntry {
 	if idx, ok := c.keyToIndex[key]; ok {
-		c.adjust(idx, prev, next)
+		c.adjust(idx, head)
 		return &c.entries[idx-1]
 	}
 	return nil
@@ -81,7 +81,7 @@ func (c *cache) del(key string) (*cacheEntry, int, int64) {
 	if idx, ok := c.keyToIndex[key]; ok && c.entries[idx-1].deadline > 0 {
 		d := c.entries[idx-1].deadline
 		c.entries[idx-1].deadline = 0 // 标记为已删除
-		c.adjust(idx, next, prev)     // 移动到链表尾部
+		c.adjust(idx, tail)           // 移动到链表尾部
 		return &c.entries[idx-1], 1, d
 	}
 
@@ -100,26 +100,28 @@ func (c *cache) walk(walker func(key string, value common.Value, deadline int64)
 // adjust 将指定节点从当前位置移动到链表的目标端（头部或尾部）
 //
 // 参数说明：
-//   - idx: 要移动的节点索引（在 links 数组中的位置，1-based）
-//   - from: 当前连接方向（0=prev 表示从后往前连接，1=next 表示从前往后连接）
-//   - to:   目标连接方向（与 from 相反，0=prev 或 1=next）
+//   - nodeIdx: 要移动的节点索引（在 links 数组中的位置，1-based）
+//   - target:  目标位置（head 表示移动到头部，tail 表示移动到尾部）
 //
 // 使用场景：
-//   - 移动到头部（刷新访问）：adjust(idx, prev, next)  // from=0(prev), to=1(next)
-//   - 移动到尾部（准备淘汰）：adjust(idx, next, prev)  // from=1(next), to=0(prev)
+//   - 移动到头部（刷新访问）：adjust(idx, head)
+//   - 移动到尾部（准备淘汰）：adjust(idx, tail)
 //
 // 链表结构示意：
 //   哨兵节点(0): [prev=尾索引, next=头索引]
 //   普通节点(i): [prev=前驱索引, next=后继索引]
-func (c *cache) adjust(idx, from, to uint16) {
-	// 如果节点已经在目标位置（from 方向为 0 表示已在头部/尾部），无需调整
-	if c.links[idx][from] == 0 {
+func (c *cache) adjust(nodeIdx, target uint16) {
+	// 计算相反方向：如果 target 是 head(1)，则 opposite 是 tail(0)，反之亦然
+	opposite := 1 - target
+
+	// 如果节点已经在目标位置（相反方向为 0 表示已在头部/尾部），无需调整
+	if c.links[nodeIdx][opposite] == 0 {
 		return
 	}
 
 	// 获取当前节点的前后连接关系
-	currPrev := c.links[idx][prev] // 当前节点的前驱
-	currNext := c.links[idx][next] // 当前节点的后继
+	currPrev := c.links[nodeIdx][prev] // 当前节点的前驱
+	currNext := c.links[nodeIdx][next] // 当前节点的后继
 
 	// 步骤1：将当前节点从链表中"摘下"（跳过当前节点）
 	// 前驱节点的 next 指向当前节点的后继
@@ -128,15 +130,15 @@ func (c *cache) adjust(idx, from, to uint16) {
 	c.links[currNext][prev] = currPrev
 
 	// 步骤2：将当前节点插入到链表的目标端（头部或尾部）
-	// 获取当前目标端的头部节点索引（哨兵节点的 to 方向）
-	targetHead := c.links[0][to]
+	// 获取当前目标端的头部节点索引（哨兵节点的 target 方向）
+	targetHead := c.links[0][target]
 
-	// 当前节点的 from 方向指向 0（哨兵），表示它现在是端点
-	c.links[idx][from] = 0
-	// 当前节点的 to 方向指向原来的目标头部
-	c.links[idx][to] = targetHead
-	// 原来目标头部的 from 方向指向当前节点
-	c.links[targetHead][from] = idx
-	// 哨兵节点的 to 方向更新为当前节点（当前节点成为新的目标端点）
-	c.links[0][to] = idx
+	// 当前节点的 opposite 方向指向 0（哨兵），表示它现在是端点
+	c.links[nodeIdx][opposite] = 0
+	// 当前节点的 target 方向指向原来的目标头部
+	c.links[nodeIdx][target] = targetHead
+	// 原来目标头部的 opposite 方向指向当前节点
+	c.links[targetHead][opposite] = nodeIdx
+	// 哨兵节点的 target 方向更新为当前节点（当前节点成为新的目标端点）
+	c.links[0][target] = nodeIdx
 }

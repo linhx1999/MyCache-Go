@@ -10,6 +10,8 @@ var (
 	clock int64  = time.Now().UnixNano() // 全局缓存时钟（纳秒），后台协程每秒校准一次
 	prev  uint16 = 0                     // 双向链表前驱方向索引（links[i][0] 表示前驱）
 	next  uint16 = 1                     // 双向链表后继方向索引（links[i][1] 表示后继）
+	head  uint16 = next                  // 链表头部方向（与 next 相同，用于语义化）
+	tail  uint16 = prev                  // 链表尾部方向（与 prev 相同，用于语义化）
 )
 
 // now 返回 clock 变量的当前值
