@@ -11,11 +11,11 @@ import (
 
 // Cache 是 LRU2 两级缓存实现
 type Cache struct {
-	locks       []sync.Mutex
-	caches      [][2]*cache
-	onEvicted   func(key string, value common.Value)
-	cleanupTick *time.Ticker
-	mask        int32
+	bucketLocks   []sync.Mutex
+	buckets       [][2]*cache
+	onEvicted     func(key string, value common.Value)
+	cleanupTicker *time.Ticker
+	bucketMask    int32
 }
 
 // New 创建一个新的 LRU2 缓存实例
@@ -35,16 +35,16 @@ func New(bucketCount, capPerBucket, level2Cap uint16, cleanupInterval time.Durat
 
 	mask := maskOfNextPowOf2(bucketCount)
 	c := &Cache{
-		locks:       make([]sync.Mutex, mask+1),
-		caches:      make([][2]*cache, mask+1),
-		onEvicted:   onEvicted,
-		cleanupTick: time.NewTicker(cleanupInterval),
-		mask:        int32(mask),
+		bucketLocks:   make([]sync.Mutex, mask+1),
+		buckets:       make([][2]*cache, mask+1),
+		onEvicted:     onEvicted,
+		cleanupTicker: time.NewTicker(cleanupInterval),
+		bucketMask:    int32(mask),
 	}
 
-	for i := range c.caches {
-		c.caches[i][0] = createCache(capPerBucket)
-		c.caches[i][1] = createCache(level2Cap)
+	for i := range c.buckets {
+		c.buckets[i][0] = createCache(capPerBucket)
+		c.buckets[i][1] = createCache(level2Cap)
 	}
 
 	if cleanupInterval > 0 {
@@ -56,14 +56,14 @@ func New(bucketCount, capPerBucket, level2Cap uint16, cleanupInterval time.Durat
 
 // Get 获取缓存项
 func (c *Cache) Get(key string) (common.Value, bool) {
-	idx := hashBKRD(key) & c.mask
-	c.locks[idx].Lock()
-	defer c.locks[idx].Unlock()
+	idx := hashBKRD(key) & c.bucketMask
+	c.bucketLocks[idx].Lock()
+	defer c.bucketLocks[idx].Unlock()
 
 	currentTime := now()
 
 	// 首先检查一级缓存
-	n1, status1, deadline := c.caches[idx][0].del(key)
+	n1, status1, deadline := c.buckets[idx][0].del(key)
 	if status1 > 0 {
 		// 从一级缓存找到项目
 		if deadline > 0 && currentTime >= deadline {
@@ -74,7 +74,7 @@ func (c *Cache) Get(key string) (common.Value, bool) {
 		}
 
 		// 项目有效，将其移至二级缓存
-		c.caches[idx][1].put(key, n1.value, deadline, c.onEvicted)
+		c.buckets[idx][1].put(key, n1.value, deadline, c.onEvicted)
 		fmt.Println("项目有效，将其移至二级缓存")
 		return n1.value, true
 	}
@@ -109,21 +109,21 @@ func (c *Cache) SetWithExpiration(key string, value common.Value, expiration tim
 		deadline = now() + int64(expiration.Nanoseconds())
 	}
 
-	idx := hashBKRD(key) & c.mask
-	c.locks[idx].Lock()
-	defer c.locks[idx].Unlock()
+	idx := hashBKRD(key) & c.bucketMask
+	c.bucketLocks[idx].Lock()
+	defer c.bucketLocks[idx].Unlock()
 
 	// 放入一级缓存
-	c.caches[idx][0].put(key, value, deadline, c.onEvicted)
+	c.buckets[idx][0].put(key, value, deadline, c.onEvicted)
 
 	return nil
 }
 
 // Delete 从缓存中删除指定键的项
 func (c *Cache) Delete(key string) bool {
-	idx := hashBKRD(key) & c.mask
-	c.locks[idx].Lock()
-	defer c.locks[idx].Unlock()
+	idx := hashBKRD(key) & c.bucketMask
+	c.bucketLocks[idx].Lock()
+	defer c.bucketLocks[idx].Unlock()
 
 	return c.delete(key, idx)
 }
@@ -132,14 +132,14 @@ func (c *Cache) Delete(key string) bool {
 func (c *Cache) Clear() {
 	var keys []string
 
-	for i := range c.caches {
-		c.locks[i].Lock()
+	for i := range c.buckets {
+		c.bucketLocks[i].Lock()
 
-		c.caches[i][0].walk(func(key string, value common.Value, deadline int64) bool {
+		c.buckets[i][0].walk(func(key string, value common.Value, deadline int64) bool {
 			keys = append(keys, key)
 			return true
 		})
-		c.caches[i][1].walk(func(key string, value common.Value, deadline int64) bool {
+		c.buckets[i][1].walk(func(key string, value common.Value, deadline int64) bool {
 			// 检查键是否已经收集（避免重复）
 			for _, k := range keys {
 				if key == k {
@@ -150,7 +150,7 @@ func (c *Cache) Clear() {
 			return true
 		})
 
-		c.locks[i].Unlock()
+		c.bucketLocks[i].Unlock()
 	}
 
 	for _, key := range keys {
@@ -162,19 +162,19 @@ func (c *Cache) Clear() {
 func (c *Cache) Len() int {
 	count := 0
 
-	for i := range c.caches {
-		c.locks[i].Lock()
+	for i := range c.buckets {
+		c.bucketLocks[i].Lock()
 
-		c.caches[i][0].walk(func(key string, value common.Value, deadline int64) bool {
+		c.buckets[i][0].walk(func(key string, value common.Value, deadline int64) bool {
 			count++
 			return true
 		})
-		c.caches[i][1].walk(func(key string, value common.Value, deadline int64) bool {
+		c.buckets[i][1].walk(func(key string, value common.Value, deadline int64) bool {
 			count++
 			return true
 		})
 
-		c.locks[i].Unlock()
+		c.bucketLocks[i].Unlock()
 	}
 
 	return count
@@ -182,14 +182,14 @@ func (c *Cache) Len() int {
 
 // Close 关闭缓存，停止清理协程
 func (c *Cache) Close() {
-	if c.cleanupTick != nil {
-		c.cleanupTick.Stop()
+	if c.cleanupTicker != nil {
+		c.cleanupTicker.Stop()
 	}
 }
 
 // _get 内部方法，从指定级别的缓存获取项
 func (c *Cache) _get(key string, idx, level int32) *cacheEntry {
-	n := c.caches[idx][level].get(key)
+	n := c.buckets[idx][level].get(key)
 	if n != nil {
 		currentTime := now()
 		if n.deadline <= 0 || currentTime >= n.deadline {
@@ -204,8 +204,8 @@ func (c *Cache) _get(key string, idx, level int32) *cacheEntry {
 
 // delete 内部删除方法
 func (c *Cache) delete(key string, idx int32) bool {
-	n1, s1, _ := c.caches[idx][0].del(key)
-	n2, s2, _ := c.caches[idx][1].del(key)
+	n1, s1, _ := c.buckets[idx][0].del(key)
+	n2, s2, _ := c.buckets[idx][1].del(key)
 	deleted := s1 > 0 || s2 > 0
 
 	// 调用淘汰回调函数
@@ -222,23 +222,23 @@ func (c *Cache) delete(key string, idx int32) bool {
 
 // cleanupLoop 定期清理过期缓存的协程
 func (c *Cache) cleanupLoop() {
-	for range c.cleanupTick.C {
+	for range c.cleanupTicker.C {
 		currentTime := now()
 
-		for i := range c.caches {
-			c.locks[i].Lock()
+		for i := range c.buckets {
+			c.bucketLocks[i].Lock()
 
 			// 检查并清理过期项目
 			var expiredKeys []string
 
-			c.caches[i][0].walk(func(key string, value common.Value, deadline int64) bool {
+			c.buckets[i][0].walk(func(key string, value common.Value, deadline int64) bool {
 				if deadline > 0 && currentTime >= deadline {
 					expiredKeys = append(expiredKeys, key)
 				}
 				return true
 			})
 
-			c.caches[i][1].walk(func(key string, value common.Value, deadline int64) bool {
+			c.buckets[i][1].walk(func(key string, value common.Value, deadline int64) bool {
 				if deadline > 0 && currentTime >= deadline {
 					for _, k := range expiredKeys {
 						if key == k {
@@ -255,7 +255,7 @@ func (c *Cache) cleanupLoop() {
 				c.delete(key, int32(i))
 			}
 
-			c.locks[i].Unlock()
+			c.bucketLocks[i].Unlock()
 		}
 	}
 }
@@ -271,78 +271,78 @@ type cacheEntry struct {
 
 // cache 内部缓存核心实现，包含双向链表和节点存储
 type cache struct {
-	// dlnk[0]是哨兵节点，记录链表头尾，dlnk[0][p]存储尾部索引，dlnk[0][n]存储头部索引
-	dlnk [][2]uint16            // 双向链表，0 表示前驱，1 表示后继
-	m    []cacheEntry             // 预分配内存存储节点
-	hmap map[string]uint16       // 键到节点索引的映射
-	last uint16                  // 最后一个节点元素的索引
+	// links[0]是哨兵节点，记录链表头尾，links[0][prev]存储尾部索引，links[0][next]存储头部索引
+	links     [][2]uint16      // 双向链表，0 表示前驱(prev)，1 表示后继(next)
+	entries   []cacheEntry     // 预分配内存存储节点
+	keyToIndex map[string]uint16 // 键到节点索引的映射
+	size      uint16           // 当前已使用的条目数量
 }
 
 func createCache(cap uint16) *cache {
 	return &cache{
-		dlnk: make([][2]uint16, cap+1),
-		m:    make([]cacheEntry, cap),
-		hmap: make(map[string]uint16, cap),
-		last: 0,
+		links:      make([][2]uint16, cap+1),
+		entries:    make([]cacheEntry, cap),
+		keyToIndex: make(map[string]uint16, cap),
+		size:       0,
 	}
 }
 
 // put 向缓存中添加项，如果是新增返回 1，更新返回 0
 func (c *cache) put(key string, val common.Value, deadline int64, onEvicted func(string, common.Value)) int {
-	if idx, ok := c.hmap[key]; ok {
-		c.m[idx-1].value, c.m[idx-1].deadline = val, deadline
-		c.adjust(idx, p, n) // 刷新到链表头部
+	if idx, ok := c.keyToIndex[key]; ok {
+		c.entries[idx-1].value, c.entries[idx-1].deadline = val, deadline
+		c.adjust(idx, prev, next) // 刷新到链表头部
 		return 0
 	}
 
-	if c.last == uint16(cap(c.m)) {
-		tail := &c.m[c.dlnk[0][p]-1]
+	if c.size == uint16(cap(c.entries)) {
+		tail := &c.entries[c.links[0][prev]-1]
 		// 调用淘汰回调函数
 		if onEvicted != nil && (*tail).deadline > 0 {
 			onEvicted((*tail).key, (*tail).value)
 		}
 
-		delete(c.hmap, (*tail).key)
-		c.hmap[key], (*tail).key, (*tail).value, (*tail).deadline = c.dlnk[0][p], key, val, deadline
-		c.adjust(c.dlnk[0][p], p, n)
+		delete(c.keyToIndex, (*tail).key)
+		c.keyToIndex[key], (*tail).key, (*tail).value, (*tail).deadline = c.links[0][prev], key, val, deadline
+		c.adjust(c.links[0][prev], prev, next)
 
 		return 1
 	}
 
-	c.last++
-	if len(c.hmap) <= 0 {
-		c.dlnk[0][p] = c.last
+	c.size++
+	if len(c.keyToIndex) <= 0 {
+		c.links[0][prev] = c.size
 	} else {
-		c.dlnk[c.dlnk[0][n]][p] = c.last
+		c.links[c.links[0][next]][prev] = c.size
 	}
 
 	// 初始化新节点并更新链表指针
-	c.m[c.last-1].key = key
-	c.m[c.last-1].value = val
-	c.m[c.last-1].deadline = deadline
-	c.dlnk[c.last] = [2]uint16{0, c.dlnk[0][n]}
-	c.hmap[key] = c.last
-	c.dlnk[0][n] = c.last
+	c.entries[c.size-1].key = key
+	c.entries[c.size-1].value = val
+	c.entries[c.size-1].deadline = deadline
+	c.links[c.size] = [2]uint16{0, c.links[0][next]}
+	c.keyToIndex[key] = c.size
+	c.links[0][next] = c.size
 
 	return 1
 }
 
 // get 从缓存中获取键对应的节点和状态
 func (c *cache) get(key string) *cacheEntry {
-	if idx, ok := c.hmap[key]; ok {
-		c.adjust(idx, p, n)
-		return &c.m[idx-1]
+	if idx, ok := c.keyToIndex[key]; ok {
+		c.adjust(idx, prev, next)
+		return &c.entries[idx-1]
 	}
 	return nil
 }
 
 // del 从缓存中删除键对应的项
 func (c *cache) del(key string) (*cacheEntry, int, int64) {
-	if idx, ok := c.hmap[key]; ok && c.m[idx-1].deadline > 0 {
-		d := c.m[idx-1].deadline
-		c.m[idx-1].deadline = 0 // 标记为已删除
-		c.adjust(idx, n, p)     // 移动到链表尾部
-		return &c.m[idx-1], 1, d
+	if idx, ok := c.keyToIndex[key]; ok && c.entries[idx-1].deadline > 0 {
+		d := c.entries[idx-1].deadline
+		c.entries[idx-1].deadline = 0 // 标记为已删除
+		c.adjust(idx, next, prev)     // 移动到链表尾部
+		return &c.entries[idx-1], 1, d
 	}
 
 	return nil, 0, 0
@@ -350,30 +350,30 @@ func (c *cache) del(key string) (*cacheEntry, int, int64) {
 
 // walk 遍历缓存中的所有有效项
 func (c *cache) walk(walker func(key string, value common.Value, deadline int64) bool) {
-	for idx := c.dlnk[0][n]; idx != 0; idx = c.dlnk[idx][n] {
-		if c.m[idx-1].deadline > 0 && !walker(c.m[idx-1].key, c.m[idx-1].value, c.m[idx-1].deadline) {
+	for idx := c.links[0][next]; idx != 0; idx = c.links[idx][next] {
+		if c.entries[idx-1].deadline > 0 && !walker(c.entries[idx-1].key, c.entries[idx-1].value, c.entries[idx-1].deadline) {
 			return
 		}
 	}
 }
 
 // adjust 调整节点在链表中的位置
-// 当 f=0, t=1 时，移动到链表头部；否则移动到链表尾部
-func (c *cache) adjust(idx, f, t uint16) {
-	if c.dlnk[idx][f] != 0 {
-		c.dlnk[c.dlnk[idx][t]][f] = c.dlnk[idx][f]
-		c.dlnk[c.dlnk[idx][f]][t] = c.dlnk[idx][t]
-		c.dlnk[idx][f] = 0
-		c.dlnk[idx][t] = c.dlnk[0][t]
-		c.dlnk[c.dlnk[0][t]][f] = idx
-		c.dlnk[0][t] = idx
+// 当 from=prev(0), to=next(1) 时，移动到链表头部；否则移动到链表尾部
+func (c *cache) adjust(idx, from, to uint16) {
+	if c.links[idx][from] != 0 {
+		c.links[c.links[idx][to]][from] = c.links[idx][from]
+		c.links[c.links[idx][from]][to] = c.links[idx][to]
+		c.links[idx][from] = 0
+		c.links[idx][to] = c.links[0][to]
+		c.links[c.links[0][to]][from] = idx
+		c.links[0][to] = idx
 	}
 }
 
 // ============ 工具函数 ============
 
 // 内部时钟，减少 time.Now() 调用造成的 GC 压力
-var clock, p, n = time.Now().UnixNano(), uint16(0), uint16(1)
+var clock, prev, next = time.Now().UnixNano(), uint16(0), uint16(1)
 
 // now 返回 clock 变量的当前值
 func now() int64 { return atomic.LoadInt64(&clock) }
