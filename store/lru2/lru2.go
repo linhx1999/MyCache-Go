@@ -67,9 +67,9 @@ func (c *LRU2) Get(key string) (common.Value, bool) {
 
 	// ===== 步骤1：首先检查一级缓存（热点数据） =====
 	// 使用 del 从一级缓存"删除"该 key（如果存在），以便后续移动到二级缓存
-	// n1: 缓存条目指针, status1: 1表示找到, deadline: 过期时间点（0表示永不过期）
-	n1, status1, deadline := c.buckets[idx][0].del(key)
-	if status1 > 0 {
+	// n1: 缓存条目指针, found: 是否找到, deadline: 过期时间点（0表示永不过期）
+	n1, found, deadline := c.buckets[idx][0].del(key)
+	if found {
 		// 在一级缓存中找到该 key
 
 		// 检查是否已过期：deadline > 0 表示设置了过期时间，且当前时间已超过 deadline
@@ -217,9 +217,9 @@ func (c *LRU2) _get(key string, idx, level int32) *cacheEntry {
 
 // delete 内部删除方法
 func (c *LRU2) delete(key string, idx int32) bool {
-	n1, s1, _ := c.buckets[idx][0].del(key)
-	n2, s2, _ := c.buckets[idx][1].del(key)
-	deleted := s1 > 0 || s2 > 0
+	n1, found1, _ := c.buckets[idx][0].del(key)
+	n2, found2, _ := c.buckets[idx][1].del(key)
+	deleted := found1 || found2
 
 	// 调用淘汰回调函数
 	if deleted {

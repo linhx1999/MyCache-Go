@@ -77,15 +77,16 @@ func (c *cache) get(key string) *cacheEntry {
 }
 
 // del 从缓存中删除键对应的项
-func (c *cache) del(key string) (*cacheEntry, int, int64) {
+// 返回值：缓存条目、是否找到、过期时间
+func (c *cache) del(key string) (*cacheEntry, bool, int64) {
 	if idx, ok := c.keyToIndex[key]; ok && c.entries[idx-1].deadline > 0 {
 		d := c.entries[idx-1].deadline
 		c.entries[idx-1].deadline = 0 // 标记为已删除
 		c.adjust(idx, tail)           // 移动到链表尾部
-		return &c.entries[idx-1], 1, d
+		return &c.entries[idx-1], true, d
 	}
 
-	return nil, 0, 0
+	return nil, false, 0
 }
 
 // walk 遍历缓存中的所有有效项
