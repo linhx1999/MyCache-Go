@@ -55,42 +55,56 @@ func New(bucketCount, capPerBucket, level2Cap uint16, cleanupInterval time.Durat
 
 // Get 获取缓存项
 func (c *LRU2) Get(key string) (common.Value, bool) {
+	// 计算 key 所在的桶索引：BKDR哈希 & 桶掩码，实现快速定位
 	idx := hashBKRD(key) & c.bucketMask
+
+	// 获取该桶的锁，保证并发安全；使用细粒度锁减少锁竞争
 	c.bucketLocks[idx].Lock()
 	defer c.bucketLocks[idx].Unlock()
 
+	// 获取当前时间戳（纳秒），用于判断是否过期
 	currentTime := now()
 
-	// 首先检查一级缓存
+	// ===== 步骤1：首先检查一级缓存（热点数据） =====
+	// 使用 del 从一级缓存"删除"该 key（如果存在），以便后续移动到二级缓存
+	// n1: 缓存条目指针, status1: 1表示找到, deadline: 过期时间点（0表示永不过期）
 	n1, status1, deadline := c.buckets[idx][0].del(key)
 	if status1 > 0 {
-		// 从一级缓存找到项目
+		// 在一级缓存中找到该 key
+
+		// 检查是否已过期：deadline > 0 表示设置了过期时间，且当前时间已超过 deadline
 		if deadline > 0 && currentTime >= deadline {
-			// 项目已过期，删除它
+			// 项目已过期，从两级缓存中彻底删除
 			c.delete(key, idx)
 			fmt.Println("找到项目已过期，删除它")
 			return nil, false
 		}
 
-		// 项目有效，将其移至二级缓存
+		// 项目有效：按照 LRU2 策略，从一级缓存"降级"到二级缓存
+		// 因为刚被访问过，它在二级缓存会成为最新数据（头部）
 		c.buckets[idx][1].put(key, n1.value, deadline, c.onEvicted)
 		fmt.Println("项目有效，将其移至二级缓存")
 		return n1.value, true
 	}
 
-	// 一级缓存未找到，检查二级缓存
+	// ===== 步骤2：一级缓存未命中，检查二级缓存（温数据） =====
+	// 调用内部 _get 方法获取二级缓存中的条目
+	// 参数 level=1 表示二级缓存（buckets[idx][1]）
 	n2 := c._get(key, idx, 1)
 	if n2 != nil {
+		// 在二级缓存中找到，同样需要检查过期时间
 		if n2.deadline > 0 && currentTime >= n2.deadline {
-			// 项目已过期，删除它
+			// 项目已过期，从两级缓存中彻底删除
 			c.delete(key, idx)
 			fmt.Println("找到项目已过期，删除它")
 			return nil, false
 		}
 
+		// 二级缓存中找到且未过期，直接返回（不需要移动，保持在二级缓存）
 		return n2.value, true
 	}
 
+	// ===== 步骤3：两级缓存都未命中 =====
 	return nil, false
 }
 

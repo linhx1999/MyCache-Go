@@ -97,15 +97,46 @@ func (c *cache) walk(walker func(key string, value common.Value, deadline int64)
 	}
 }
 
-// adjust 调整节点在链表中的位置
-// 当 from=prev(0), to=next(1) 时，移动到链表头部；否则移动到链表尾部
+// adjust 将指定节点从当前位置移动到链表的目标端（头部或尾部）
+//
+// 参数说明：
+//   - idx: 要移动的节点索引（在 links 数组中的位置，1-based）
+//   - from: 当前连接方向（0=prev 表示从后往前连接，1=next 表示从前往后连接）
+//   - to:   目标连接方向（与 from 相反，0=prev 或 1=next）
+//
+// 使用场景：
+//   - 移动到头部（刷新访问）：adjust(idx, prev, next)  // from=0(prev), to=1(next)
+//   - 移动到尾部（准备淘汰）：adjust(idx, next, prev)  // from=1(next), to=0(prev)
+//
+// 链表结构示意：
+//   哨兵节点(0): [prev=尾索引, next=头索引]
+//   普通节点(i): [prev=前驱索引, next=后继索引]
 func (c *cache) adjust(idx, from, to uint16) {
-	if c.links[idx][from] != 0 {
-		c.links[c.links[idx][to]][from] = c.links[idx][from]
-		c.links[c.links[idx][from]][to] = c.links[idx][to]
-		c.links[idx][from] = 0
-		c.links[idx][to] = c.links[0][to]
-		c.links[c.links[0][to]][from] = idx
-		c.links[0][to] = idx
+	// 如果节点已经在目标位置（from 方向为 0 表示已在头部/尾部），无需调整
+	if c.links[idx][from] == 0 {
+		return
 	}
+
+	// 获取当前节点的前后连接关系
+	currPrev := c.links[idx][prev] // 当前节点的前驱
+	currNext := c.links[idx][next] // 当前节点的后继
+
+	// 步骤1：将当前节点从链表中"摘下"（跳过当前节点）
+	// 前驱节点的 next 指向当前节点的后继
+	c.links[currPrev][next] = currNext
+	// 后继节点的 prev 指向当前节点的前驱
+	c.links[currNext][prev] = currPrev
+
+	// 步骤2：将当前节点插入到链表的目标端（头部或尾部）
+	// 获取当前目标端的头部节点索引（哨兵节点的 to 方向）
+	targetHead := c.links[0][to]
+
+	// 当前节点的 from 方向指向 0（哨兵），表示它现在是端点
+	c.links[idx][from] = 0
+	// 当前节点的 to 方向指向原来的目标头部
+	c.links[idx][to] = targetHead
+	// 原来目标头部的 from 方向指向当前节点
+	c.links[targetHead][from] = idx
+	// 哨兵节点的 to 方向更新为当前节点（当前节点成为新的目标端点）
+	c.links[0][to] = idx
 }
