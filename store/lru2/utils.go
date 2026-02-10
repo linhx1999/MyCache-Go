@@ -5,8 +5,12 @@ import (
 	"time"
 )
 
-// 内部时钟，减少 time.Now() 调用造成的 GC 压力
-var clock, prev, next = time.Now().UnixNano(), uint16(0), uint16(1)
+// 内部时钟和链表方向常量，用于减少 time.Now() 系统调用造成的性能开销
+var (
+	clock int64  = time.Now().UnixNano() // 全局缓存时钟（纳秒），后台协程每秒校准一次
+	prev  uint16 = 0                     // 双向链表前驱方向索引（links[i][0] 表示前驱）
+	next  uint16 = 1                     // 双向链表后继方向索引（links[i][1] 表示后继）
+)
 
 // now 返回 clock 变量的当前值
 func now() int64 { return atomic.LoadInt64(&clock) }

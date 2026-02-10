@@ -4,18 +4,18 @@ import "github.com/linhx1999/MyCache-Go/store/common"
 
 // cacheEntry 表示 LRU 缓存中的一个条目
 type cacheEntry struct {
-	key      string
-	value    common.Value
-	deadline int64 // 过期时间戳，deadline = 0 表示已删除
+	key      string       // 缓存键
+	value    common.Value // 缓存值
+	deadline int64        // 过期时间戳（纳秒），0 表示已删除，正数表示过期时间点
 }
 
 // cache 是单个 LRU 缓存桶的实现，包含双向链表和节点存储
 type cache struct {
 	// links[0]是哨兵节点，记录链表头尾，links[0][prev]存储尾部索引，links[0][next]存储头部索引
-	links      [][2]uint16       // 双向链表，0 表示前驱(prev)，1 表示后继(next)
-	entries    []cacheEntry      // 预分配内存存储节点
-	keyToIndex map[string]uint16 // 键到节点索引的映射
-	size       uint16            // 当前已使用的条目数量
+	links      [][2]uint16       // 双向链表数组，每个元素 [2]uint16 表示 [prev, next]，索引从 1 开始（0 为哨兵）
+	entries    []cacheEntry      // 预分配的缓存条目数组，存储实际的键值对数据
+	keyToIndex map[string]uint16 // 键到 entries 索引的映射（+1 后的值，0 表示不存在），用于 O(1) 查找
+	size       uint16            // 当前已使用的条目数量，也是 entries 中的下一个可用位置
 }
 
 func createCache(cap uint16) *cache {
