@@ -11,7 +11,7 @@ import (
 // LRU2Cache 是两级缓存实现（一级热点缓存 + 二级温数据缓存）
 type LRU2Cache struct {
 	bucketLocks   []sync.Mutex                         // 每个桶对应的锁，用于减少并发冲突
-	buckets       [][2]*cache                          // 缓存桶数组，每个桶包含两级缓存：[0]一级热点缓存，[1]二级温数据缓存
+	buckets       [][2]*cacheBucket                     // 缓存桶数组，每个桶包含两级缓存：[0]一级热点缓存，[1]二级温数据缓存
 	onEvicted     func(key string, value common.Value) // 缓存项被淘汰时的回调函数
 	cleanupTicker *time.Ticker                         // 过期清理定时器，定期触发过期缓存扫描
 	bucketMask    int32                                // 桶索引掩码，用于通过位运算快速定位桶（hash & bucketMask）

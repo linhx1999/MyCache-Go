@@ -25,7 +25,7 @@ func New(bucketCount, capPerBucket, level2Cap uint16, cleanupInterval time.Durat
 	mask := maskOfNextPowOf2(bucketCount)
 	c := &LRU2Cache{
 		bucketLocks:   make([]sync.Mutex, mask+1),
-		buckets:       make([][2]*cache, mask+1),
+		buckets:       make([][2]*cacheBucket, mask+1),
 		onEvicted:     onEvicted,
 		cleanupTicker: time.NewTicker(cleanupInterval),
 		bucketMask:    int32(mask),
