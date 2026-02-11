@@ -83,7 +83,7 @@ func (r *HashRing) rebalanceNodes() {
 
 		if newReplicas != currentReplicas {
 			// 重新添加节点的虚拟节点
-			if err := r.Remove(node); err != nil {
+			if err := r.removeNodeUnlocked(node); err != nil {
 				continue // 如果移除失败，跳过这个节点
 			}
 			r.addNode(node, newReplicas)

@@ -73,6 +73,11 @@ func (r *HashRing) Remove(node string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	return r.removeNodeUnlocked(node)
+}
+
+// removeNodeUnlocked 无锁版本，调用者必须已持有写锁
+func (r *HashRing) removeNodeUnlocked(node string) error {
 	replicas := r.nodeReplicas[node]
 	if replicas == 0 {
 		return fmt.Errorf("node %s not found", node)
