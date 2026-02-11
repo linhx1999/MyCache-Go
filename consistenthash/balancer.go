@@ -7,27 +7,50 @@ import (
 	"time"
 )
 
-// checkAndRebalance 检查并重新平衡虚拟节点
+// minSampleSize 触发负载重平衡的最小样本数量
+// 避免在样本量不足时做出错误的调整决策
+const minSampleSize = 1000
+
+// checkAndRebalance 检查负载分布并在必要时重新平衡虚拟节点
+//
+// 算法逻辑：
+// 1. 收集每个节点的请求次数，计算平均负载
+// 2. 找出与平均负载偏差最大的节点（以比例计算）
+// 3. 如果最大偏差超过阈值（如25%），触发重平衡
+// 4. 重平衡策略：高负载节点减少虚拟节点，低负载节点增加虚拟节点
 func (r *HashRing) checkAndRebalance() {
-	if atomic.LoadInt64(&r.totalRequests) < 1000 {
-		return // 样本太少，不进行调整
+	// 样本量不足时不进行调整，避免误差过大
+	totalRequests := atomic.LoadInt64(&r.totalRequests)
+	if totalRequests < minSampleSize {
+		return
 	}
 
-	// 计算负载情况
-	avgLoad := float64(r.totalRequests) / float64(len(r.nodeReplicas))
-	var maxDiff float64
+	// 计算平均每个节点应该处理的请求数
+	avgLoad := float64(totalRequests) / float64(len(r.nodeReplicas))
+
+	// 找出负载偏差最大的节点
+	maxDeviationRatio := r.calculateMaxDeviation(avgLoad)
+
+	// 当最大偏差超过配置的阈值时，触发重平衡
+	if maxDeviationRatio > r.config.LoadBalanceThreshold {
+		r.rebalanceNodes()
+	}
+}
+
+// calculateMaxDeviation 计算所有节点中与平均负载的最大偏差比例
+// deviation = |actual - expected| / expected
+func (r *HashRing) calculateMaxDeviation(avgLoad float64) float64 {
+	var maxDeviation float64
 
 	for _, count := range r.nodeCounts {
-		diff := math.Abs(float64(count) - avgLoad)
-		if diff/avgLoad > maxDiff {
-			maxDiff = diff / avgLoad
+		// 计算当前节点与平均负载的偏差比例
+		deviation := math.Abs(float64(count)-avgLoad) / avgLoad
+		if deviation > maxDeviation {
+			maxDeviation = deviation
 		}
 	}
 
-	// 如果负载不均衡度超过阈值，调整虚拟节点
-	if maxDiff > r.config.LoadBalanceThreshold {
-		r.rebalanceNodes()
-	}
+	return maxDeviation
 }
 
 // rebalanceNodes 重新平衡节点
