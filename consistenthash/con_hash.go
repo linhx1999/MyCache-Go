@@ -10,8 +10,8 @@ import (
 	"time"
 )
 
-// Map 一致性哈希实现
-type Map struct {
+// HashRing 一致性哈希实现
+type HashRing struct {
 	mu sync.RWMutex
 	// 配置信息
 	config *Config
@@ -28,8 +28,8 @@ type Map struct {
 }
 
 // New 创建一致性哈希实例
-func New(opts ...Option) *Map {
-	m := &Map{
+func New(opts ...Option) *HashRing {
+	r := &HashRing{
 		config:       DefaultConfig,
 		hashMap:      make(map[int]string),
 		nodeReplicas: make(map[string]int),
@@ -37,31 +37,31 @@ func New(opts ...Option) *Map {
 	}
 
 	for _, opt := range opts {
-		opt(m)
+		opt(r)
 	}
 
-	m.startBalancer() // 启动负载均衡器
-	return m
+	r.startBalancer() // 启动负载均衡器
+	return r
 }
 
 // Option 配置选项
-type Option func(*Map)
+type Option func(*HashRing)
 
 // WithConfig 设置配置
 func WithConfig(config *Config) Option {
-	return func(m *Map) {
-		m.config = config
+	return func(r *HashRing) {
+		r.config = config
 	}
 }
 
 // Add 添加节点
-func (m *Map) Add(nodes ...string) error {
+func (r *HashRing) Add(nodes ...string) error {
 	if len(nodes) == 0 {
 		return errors.New("no nodes provided")
 	}
 
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
 	for _, node := range nodes {
 		if node == "" {
@@ -69,98 +69,98 @@ func (m *Map) Add(nodes ...string) error {
 		}
 
 		// 为节点添加虚拟节点
-		m.addNode(node, m.config.DefaultReplicas)
+		r.addNode(node, r.config.DefaultReplicas)
 	}
 
 	// 重新排序
-	sort.Ints(m.keys)
+	sort.Ints(r.keys)
 	return nil
 }
 
 // Remove 移除节点
-func (m *Map) Remove(node string) error {
+func (r *HashRing) Remove(node string) error {
 	if node == "" {
 		return errors.New("invalid node")
 	}
 
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
-	replicas := m.nodeReplicas[node]
+	replicas := r.nodeReplicas[node]
 	if replicas == 0 {
 		return fmt.Errorf("node %s not found", node)
 	}
 
 	// 移除节点的所有虚拟节点
 	for i := 0; i < replicas; i++ {
-		hash := int(m.config.HashFunc([]byte(fmt.Sprintf("%s-%d", node, i))))
-		delete(m.hashMap, hash)
-		for j := 0; j < len(m.keys); j++ {
-			if m.keys[j] == hash {
-				m.keys = append(m.keys[:j], m.keys[j+1:]...)
+		hash := int(r.config.HashFunc([]byte(fmt.Sprintf("%s-%d", node, i))))
+		delete(r.hashMap, hash)
+		for j := 0; j < len(r.keys); j++ {
+			if r.keys[j] == hash {
+				r.keys = append(r.keys[:j], r.keys[j+1:]...)
 				break
 			}
 		}
 	}
 
-	delete(m.nodeReplicas, node)
-	delete(m.nodeCounts, node)
+	delete(r.nodeReplicas, node)
+	delete(r.nodeCounts, node)
 	return nil
 }
 
 // Get 获取节点
-func (m *Map) Get(key string) string {
+func (r *HashRing) Get(key string) string {
 	if key == "" {
 		return ""
 	}
 
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 
-	if len(m.keys) == 0 {
+	if len(r.keys) == 0 {
 		return ""
 	}
 
-	hash := int(m.config.HashFunc([]byte(key)))
+	hash := int(r.config.HashFunc([]byte(key)))
 	// 二分查找
-	idx := sort.Search(len(m.keys), func(i int) bool {
-		return m.keys[i] >= hash
+	idx := sort.Search(len(r.keys), func(i int) bool {
+		return r.keys[i] >= hash
 	})
 
 	// 处理边界情况
-	if idx == len(m.keys) {
+	if idx == len(r.keys) {
 		idx = 0
 	}
 
-	node := m.hashMap[m.keys[idx]]
-	count := m.nodeCounts[node]
-	m.nodeCounts[node] = count + 1
-	atomic.AddInt64(&m.totalRequests, 1)
+	node := r.hashMap[r.keys[idx]]
+	count := r.nodeCounts[node]
+	r.nodeCounts[node] = count + 1
+	atomic.AddInt64(&r.totalRequests, 1)
 
 	return node
 }
 
 // addNode 添加节点的虚拟节点
-func (m *Map) addNode(node string, replicas int) {
+func (r *HashRing) addNode(node string, replicas int) {
 	for i := 0; i < replicas; i++ {
-		hash := int(m.config.HashFunc([]byte(fmt.Sprintf("%s-%d", node, i))))
-		m.keys = append(m.keys, hash)
-		m.hashMap[hash] = node
+		hash := int(r.config.HashFunc([]byte(fmt.Sprintf("%s-%d", node, i))))
+		r.keys = append(r.keys, hash)
+		r.hashMap[hash] = node
 	}
-	m.nodeReplicas[node] = replicas
+	r.nodeReplicas[node] = replicas
 }
 
 // checkAndRebalance 检查并重新平衡虚拟节点
-func (m *Map) checkAndRebalance() {
-	if atomic.LoadInt64(&m.totalRequests) < 1000 {
+func (r *HashRing) checkAndRebalance() {
+	if atomic.LoadInt64(&r.totalRequests) < 1000 {
 		return // 样本太少，不进行调整
 	}
 
 	// 计算负载情况
-	avgLoad := float64(m.totalRequests) / float64(len(m.nodeReplicas))
+	avgLoad := float64(r.totalRequests) / float64(len(r.nodeReplicas))
 	var maxDiff float64
 
-	for _, count := range m.nodeCounts {
+	for _, count := range r.nodeCounts {
 		diff := math.Abs(float64(count) - avgLoad)
 		if diff/avgLoad > maxDiff {
 			maxDiff = diff / avgLoad
@@ -168,21 +168,21 @@ func (m *Map) checkAndRebalance() {
 	}
 
 	// 如果负载不均衡度超过阈值，调整虚拟节点
-	if maxDiff > m.config.LoadBalanceThreshold {
-		m.rebalanceNodes()
+	if maxDiff > r.config.LoadBalanceThreshold {
+		r.rebalanceNodes()
 	}
 }
 
 // rebalanceNodes 重新平衡节点
-func (m *Map) rebalanceNodes() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+func (r *HashRing) rebalanceNodes() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
-	avgLoad := float64(m.totalRequests) / float64(len(m.nodeReplicas))
+	avgLoad := float64(r.totalRequests) / float64(len(r.nodeReplicas))
 
 	// 调整每个节点的虚拟节点数量
-	for node, count := range m.nodeCounts {
-		currentReplicas := m.nodeReplicas[node]
+	for node, count := range r.nodeCounts {
+		currentReplicas := r.nodeReplicas[node]
 		loadRatio := float64(count) / avgLoad
 
 		var newReplicas int
@@ -195,57 +195,57 @@ func (m *Map) rebalanceNodes() {
 		}
 
 		// 确保在限制范围内
-		if newReplicas < m.config.MinReplicas {
-			newReplicas = m.config.MinReplicas
+		if newReplicas < r.config.MinReplicas {
+			newReplicas = r.config.MinReplicas
 		}
-		if newReplicas > m.config.MaxReplicas {
-			newReplicas = m.config.MaxReplicas
+		if newReplicas > r.config.MaxReplicas {
+			newReplicas = r.config.MaxReplicas
 		}
 
 		if newReplicas != currentReplicas {
 			// 重新添加节点的虚拟节点
-			if err := m.Remove(node); err != nil {
+			if err := r.Remove(node); err != nil {
 				continue // 如果移除失败，跳过这个节点
 			}
-			m.addNode(node, newReplicas)
+			r.addNode(node, newReplicas)
 		}
 	}
 
 	// 重置计数器
-	for node := range m.nodeCounts {
-		m.nodeCounts[node] = 0
+	for node := range r.nodeCounts {
+		r.nodeCounts[node] = 0
 	}
-	atomic.StoreInt64(&m.totalRequests, 0)
+	atomic.StoreInt64(&r.totalRequests, 0)
 
 	// 重新排序
-	sort.Ints(m.keys)
+	sort.Ints(r.keys)
 }
 
 // GetStats 获取负载统计信息
-func (m *Map) GetStats() map[string]float64 {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+func (r *HashRing) GetStats() map[string]float64 {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 
 	stats := make(map[string]float64)
-	total := atomic.LoadInt64(&m.totalRequests)
+	total := atomic.LoadInt64(&r.totalRequests)
 	if total == 0 {
 		return stats
 	}
 
-	for node, count := range m.nodeCounts {
+	for node, count := range r.nodeCounts {
 		stats[node] = float64(count) / float64(total)
 	}
 	return stats
 }
 
 // 将checkAndRebalance移到单独的goroutine中
-func (m *Map) startBalancer() {
+func (r *HashRing) startBalancer() {
 	go func() {
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
 
 		for range ticker.C {
-			m.checkAndRebalance()
+			r.checkAndRebalance()
 		}
 	}()
 }

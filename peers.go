@@ -34,7 +34,7 @@ type ClientPicker struct {
 	selfAddr string
 	svcName  string
 	mu       sync.RWMutex
-	consHash *consistenthash.Map
+	consHash *consistenthash.HashRing
 	clients  map[string]*Client
 	etcdCli  *clientv3.Client
 	ctx      context.Context
