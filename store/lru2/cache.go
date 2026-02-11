@@ -1,145 +1,254 @@
 package lru2
 
-import "github.com/linhx1999/MyCache-Go/store/common"
+import (
+	"fmt"
+	"sync"
+	"time"
 
-// cacheEntry 表示 LRU 缓存中的一个条目
-type cacheEntry struct {
-	key      string       // 缓存键
-	value    common.Value // 缓存值
-	deadline int64        // 过期时间戳（纳秒）：0 表示已删除，-1 表示永不过期，正数表示过期时间点
+	"github.com/linhx1999/MyCache-Go/store/common"
+)
+
+// LRU2Cache 是两级缓存实现（一级热点缓存 + 二级温数据缓存）
+type LRU2Cache struct {
+	bucketLocks   []sync.Mutex                         // 每个桶对应的锁，用于减少并发冲突
+	buckets       [][2]*cacheBucket                     // 缓存桶数组，每个桶包含两级缓存：[0]一级热点缓存，[1]二级温数据缓存
+	onEvicted     func(key string, value common.Value) // 缓存项被淘汰时的回调函数
+	cleanupTicker *time.Ticker                         // 过期清理定时器，定期触发过期缓存扫描
+	bucketMask    int32                                // 桶索引掩码，用于通过位运算快速定位桶（hash & bucketMask）
 }
 
-// cacheBucket 是单个 LRU 缓存桶的实现，包含双向链表和节点存储
-type cacheBucket struct {
-	// links[0]是哨兵节点，记录链表头尾，links[0][prev]存储尾部索引，links[0][next]存储头部索引
-	links      [][2]uint16       // 双向链表数组，每个元素 [2]uint16 表示 [prev, next]，索引从 1 开始（0 为哨兵）
-	entries    []cacheEntry      // 预分配的缓存条目数组，存储实际的键值对数据
-	keyToIndex map[string]uint16 // 键到 entries 索引的映射（+1 后的值，0 表示不存在），用于 O(1) 查找
-	size       uint16            // 当前已使用的条目数量，也是 entries 中的下一个可用位置
+// keyToBucketIndex 计算 key 所在的桶索引
+func (l *LRU2Cache) keyToBucketIndex(key string) int32 {
+	return hashBKRD(key) & l.bucketMask
 }
 
-func createCache(cap uint16) *cacheBucket {
-	return &cacheBucket{
-		links:      make([][2]uint16, cap+1),
-		entries:    make([]cacheEntry, cap),
-		keyToIndex: make(map[string]uint16, cap),
-		size:       0,
-	}
-}
+// Get 获取缓存项
+func (l *LRU2Cache) Get(key string) (common.Value, bool) {
+	// 计算 key 所在的桶索引：BKDR哈希 & 桶掩码，实现快速定位
+	idx := l.keyToBucketIndex(key)
 
-// put 向缓存中添加项，如果是新增返回 1，更新返回 0
-func (b *cacheBucket) put(key string, val common.Value, deadline int64, onEvicted func(string, common.Value)) int {
-	if idx, ok := b.keyToIndex[key]; ok {
-		b.entries[idx-1].value, b.entries[idx-1].deadline = val, deadline
-		b.adjust(idx, head) // 刷新到链表头部
-		return 0
-	}
+	// 获取该桶的锁，保证并发安全；使用细粒度锁减少锁竞争
+	l.bucketLocks[idx].Lock()
+	defer l.bucketLocks[idx].Unlock()
 
-	if b.size == uint16(cap(b.entries)) {
-		tail := &b.entries[b.links[0][prev]-1]
-		// 调用淘汰回调函数
-		if onEvicted != nil && (*tail).deadline > 0 {
-			onEvicted((*tail).key, (*tail).value)
+	// 获取当前时间戳（纳秒），用于判断是否过期
+	currentTime := now()
+
+	// ===== 步骤1：首先检查一级缓存（热点数据） =====
+	// 使用 del 从一级缓存"删除"该 key（如果存在），以便后续移动到二级缓存
+	// entry: 缓存条目指针, found: 是否找到, deadline: 过期时间点（-1表示永不过期）
+	entry, found, deadline := l.buckets[idx][0].del(key)
+	if found {
+		// 在一级缓存中找到该 key
+
+		// 检查是否已过期：deadline > 0 表示设置了过期时间，且当前时间已超过 deadline
+		if deadline > 0 && currentTime >= deadline {
+			// 项目已过期，从两级缓存中彻底删除
+			l.delete(key, idx)
+			fmt.Printf("[LRU2] 缓存项已过期，执行删除: key=%s\n", key)
+			return nil, false
 		}
 
-		delete(b.keyToIndex, (*tail).key)
-		b.keyToIndex[key], (*tail).key, (*tail).value, (*tail).deadline = b.links[0][prev], key, val, deadline
-		b.adjust(b.links[0][prev], head)
-
-		return 1
+		// 项目有效：按照 LRU2 策略，从一级缓存"降级"到二级缓存
+		// 因为刚被访问过，它在二级缓存会成为最新数据（头部）
+		l.buckets[idx][1].put(key, entry.value, deadline, l.onEvicted)
+		fmt.Printf("[LRU2] 缓存项从一级降级到二级: key=%s\n", key)
+		return entry.value, true
 	}
 
-	b.size++
-	if len(b.keyToIndex) <= 0 {
-		b.links[0][prev] = b.size
-	} else {
-		b.links[b.links[0][next]][prev] = b.size
+	// ===== 步骤2：一级缓存未命中，检查二级缓存（温数据） =====
+	// 从二级缓存获取条目（包含过期检查）
+	entry2 := l.getFromLevel(key, idx, 1)
+	if entry2 != nil {
+		// 在二级缓存中找到，同样需要检查过期时间
+		if entry2.deadline > 0 && currentTime >= entry2.deadline {
+			// 项目已过期，从两级缓存中彻底删除
+			l.delete(key, idx)
+			fmt.Printf("[LRU2] 缓存项已过期，执行删除: key=%s\n", key)
+			return nil, false
+		}
+
+		// 二级缓存中找到且未过期，直接返回（不需要移动，保持在二级缓存）
+		return entry2.value, true
 	}
 
-	// 初始化新节点并更新链表指针
-	b.entries[b.size-1].key = key
-	b.entries[b.size-1].value = val
-	b.entries[b.size-1].deadline = deadline
-	b.links[b.size] = [2]uint16{0, b.links[0][next]}
-	b.keyToIndex[key] = b.size
-	b.links[0][next] = b.size
-
-	return 1
+	// ===== 步骤3：两级缓存都未命中 =====
+	return nil, false
 }
 
-// get 从缓存中获取键对应的节点和状态
-func (b *cacheBucket) get(key string) *cacheEntry {
-	if idx, ok := b.keyToIndex[key]; ok {
-		b.adjust(idx, head)
-		return &b.entries[idx-1]
-	}
+// Set 添加或更新缓存项（永不过期）
+func (l *LRU2Cache) Set(key string, value common.Value) error {
+	idx := l.keyToBucketIndex(key)
+	l.bucketLocks[idx].Lock()
+	defer l.bucketLocks[idx].Unlock()
+
+	// 放入一级缓存，-1 表示永不过期
+	l.buckets[idx][0].put(key, value, -1, l.onEvicted)
+
 	return nil
 }
 
-// del 从缓存中删除键对应的项
-// 返回值：缓存条目、是否找到、过期时间
-func (b *cacheBucket) del(key string) (*cacheEntry, bool, int64) {
-	if idx, ok := b.keyToIndex[key]; ok && b.entries[idx-1].deadline != 0 {
-		d := b.entries[idx-1].deadline
-		b.entries[idx-1].deadline = 0 // 标记为已删除
-		b.adjust(idx, tail)           // 移动到链表尾部
-		return &b.entries[idx-1], true, d
+// SetWithExpiration 添加或更新缓存项，并设置过期时间
+func (l *LRU2Cache) SetWithExpiration(key string, value common.Value, expiration time.Duration) error {
+	// 计算过期时间
+	var deadline int64
+	if expiration > 0 {
+		// now() 返回纳秒时间戳，确保 expiration 也是纳秒单位
+		deadline = now() + int64(expiration.Nanoseconds())
+	} else {
+		// 负数表示永不过期
+		deadline = -1
 	}
 
-	return nil, false, 0
+	idx := l.keyToBucketIndex(key)
+	l.bucketLocks[idx].Lock()
+	defer l.bucketLocks[idx].Unlock()
+
+	// 放入一级缓存
+	l.buckets[idx][0].put(key, value, deadline, l.onEvicted)
+
+	return nil
 }
 
-// walk 遍历缓存中的所有有效项
-func (b *cacheBucket) walk(walker func(key string, value common.Value, deadline int64) bool) {
-	for idx := b.links[0][next]; idx != 0; idx = b.links[idx][next] {
-		if b.entries[idx-1].deadline != 0 && !walker(b.entries[idx-1].key, b.entries[idx-1].value, b.entries[idx-1].deadline) {
-			return
+// Delete 从缓存中删除指定键的项
+func (l *LRU2Cache) Delete(key string) bool {
+	idx := l.keyToBucketIndex(key)
+	l.bucketLocks[idx].Lock()
+	defer l.bucketLocks[idx].Unlock()
+
+	return l.delete(key, idx)
+}
+
+// Clear 清空缓存
+func (l *LRU2Cache) Clear() {
+	var keys []string
+
+	for i := range l.buckets {
+		l.bucketLocks[i].Lock()
+
+		l.buckets[i][0].walk(func(key string, value common.Value, deadline int64) bool {
+			keys = append(keys, key)
+			return true
+		})
+		l.buckets[i][1].walk(func(key string, value common.Value, deadline int64) bool {
+			// 检查键是否已经收集（避免重复）
+			for _, k := range keys {
+				if key == k {
+					return true
+				}
+			}
+			keys = append(keys, key)
+			return true
+		})
+
+		l.bucketLocks[i].Unlock()
+	}
+
+	for _, key := range keys {
+		l.Delete(key)
+	}
+}
+
+// Len 返回缓存中的项数
+func (l *LRU2Cache) Len() int {
+	count := 0
+
+	for i := range l.buckets {
+		l.bucketLocks[i].Lock()
+
+		l.buckets[i][0].walk(func(key string, value common.Value, deadline int64) bool {
+			count++
+			return true
+		})
+		l.buckets[i][1].walk(func(key string, value common.Value, deadline int64) bool {
+			count++
+			return true
+		})
+
+		l.bucketLocks[i].Unlock()
+	}
+
+	return count
+}
+
+// Close 关闭缓存，停止清理协程
+func (l *LRU2Cache) Close() {
+	if l.cleanupTicker != nil {
+		l.cleanupTicker.Stop()
+	}
+}
+
+// getFromLevel 从指定级别的缓存获取条目（包含过期检查）
+func (l *LRU2Cache) getFromLevel(key string, idx, level int32) *cacheEntry {
+	n := l.buckets[idx][level].get(key)
+	if n != nil {
+		currentTime := now()
+		// deadline == 0: 已删除
+		// deadline == -1: 永不过期
+		// deadline > 0: 检查是否过期
+		if n.deadline == 0 || (n.deadline > 0 && currentTime >= n.deadline) {
+			return nil
+		}
+		return n
+	}
+
+	return nil
+}
+
+// delete 内部删除方法
+func (l *LRU2Cache) delete(key string, idx int32) bool {
+	n1, found1, _ := l.buckets[idx][0].del(key)
+	n2, found2, _ := l.buckets[idx][1].del(key)
+	deleted := found1 || found2
+
+	// 调用淘汰回调函数
+	if deleted {
+		if n1 != nil && n1.value != nil && l.onEvicted != nil {
+			l.onEvicted(key, n1.value)
+		} else if n2 != nil && n2.value != nil && l.onEvicted != nil {
+			l.onEvicted(key, n2.value)
 		}
 	}
+
+	return deleted
 }
 
-// adjust 将指定节点从当前位置移动到链表的目标端（头部或尾部）
-//
-// 参数说明：
-//   - nodeIdx: 要移动的节点索引（在 links 数组中的位置，1-based）
-//   - target:  目标位置（head 表示移动到头部，tail 表示移动到尾部）
-//
-// 使用场景：
-//   - 移动到头部（刷新访问）：adjust(idx, head)
-//   - 移动到尾部（准备淘汰）：adjust(idx, tail)
-//
-// 链表结构示意：
-//   哨兵节点(0): [prev=尾索引, next=头索引]
-//   普通节点(i): [prev=前驱索引, next=后继索引]
-func (b *cacheBucket) adjust(nodeIdx, target uint16) {
-	// 计算相反方向：如果 target 是 head(1)，则 opposite 是 tail(0)，反之亦然
-	opposite := 1 - target
+// cleanupLoop 定期清理过期缓存的协程
+func (l *LRU2Cache) cleanupLoop() {
+	for range l.cleanupTicker.C {
+		currentTime := now()
 
-	// 如果节点已经在目标位置（相反方向为 0 表示已在头部/尾部），无需调整
-	if b.links[nodeIdx][opposite] == 0 {
-		return
+		for i := range l.buckets {
+			l.bucketLocks[i].Lock()
+
+			// 检查并清理过期项目
+			var expiredKeys []string
+
+			l.buckets[i][0].walk(func(key string, value common.Value, deadline int64) bool {
+				if deadline > 0 && currentTime >= deadline {
+					expiredKeys = append(expiredKeys, key)
+				}
+				return true
+			})
+
+			l.buckets[i][1].walk(func(key string, value common.Value, deadline int64) bool {
+				if deadline > 0 && currentTime >= deadline {
+					for _, k := range expiredKeys {
+						if key == k {
+							// 避免重复
+							return true
+						}
+					}
+					expiredKeys = append(expiredKeys, key)
+				}
+				return true
+			})
+
+			for _, key := range expiredKeys {
+				l.delete(key, int32(i))
+			}
+
+			l.bucketLocks[i].Unlock()
+		}
 	}
-
-	// 获取当前节点的前后连接关系
-	currPrev := b.links[nodeIdx][prev] // 当前节点的前驱
-	currNext := b.links[nodeIdx][next] // 当前节点的后继
-
-	// 步骤1：将当前节点从链表中"摘下"（跳过当前节点）
-	// 前驱节点的 next 指向当前节点的后继
-	b.links[currPrev][next] = currNext
-	// 后继节点的 prev 指向当前节点的前驱
-	b.links[currNext][prev] = currPrev
-
-	// 步骤2：将当前节点插入到链表的目标端（头部或尾部）
-	// 获取当前目标端的头部节点索引（哨兵节点的 target 方向）
-	targetHead := b.links[0][target]
-
-	// 当前节点的 opposite 方向指向 0（哨兵），表示它现在是端点
-	b.links[nodeIdx][opposite] = 0
-	// 当前节点的 target 方向指向原来的目标头部
-	b.links[nodeIdx][target] = targetHead
-	// 原来目标头部的 opposite 方向指向当前节点
-	b.links[targetHead][opposite] = nodeIdx
-	// 哨兵节点的 target 方向更新为当前节点（当前节点成为新的目标端点）
-	b.links[0][target] = nodeIdx
 }
