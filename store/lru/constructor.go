@@ -8,7 +8,7 @@ import (
 )
 
 // New 创建一个新的 LRU 缓存实例
-func New(maxBytes int64, cleanupInterval time.Duration, onEvicted func(string, common.Value)) *LRU {
+func New(maxBytes int64, cleanupInterval time.Duration, onEvicted func(string, common.Value)) *LRUCache {
 	// 设置默认清理间隔
 	if cleanupInterval <= 0 {
 		cleanupInterval = time.Minute
@@ -19,7 +19,7 @@ func New(maxBytes int64, cleanupInterval time.Duration, onEvicted func(string, c
 		maxBytes = 8 * 1024 * 1024 // 8MB
 	}
 
-	c := &LRU{
+	c := &LRUCache{
 		lruList:         list.New(),
 		entries:         make(map[string]*list.Element),
 		expirationMap:   make(map[string]time.Time),
