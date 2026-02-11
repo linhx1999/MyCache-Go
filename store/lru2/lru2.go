@@ -36,8 +36,8 @@ func (l *LRU2Cache) Get(key string) (common.Value, bool) {
 
 	// ===== 步骤1：首先检查一级缓存（热点数据） =====
 	// 使用 del 从一级缓存"删除"该 key（如果存在），以便后续移动到二级缓存
-	// n1: 缓存条目指针, found: 是否找到, deadline: 过期时间点（0表示永不过期）
-	n1, found, deadline := l.buckets[idx][0].del(key)
+	// entry: 缓存条目指针, found: 是否找到, deadline: 过期时间点（-1表示永不过期）
+	entry, found, deadline := l.buckets[idx][0].del(key)
 	if found {
 		// 在一级缓存中找到该 key
 
@@ -45,50 +45,60 @@ func (l *LRU2Cache) Get(key string) (common.Value, bool) {
 		if deadline > 0 && currentTime >= deadline {
 			// 项目已过期，从两级缓存中彻底删除
 			l.delete(key, idx)
-			fmt.Println("找到项目已过期，删除它")
+			fmt.Printf("[LRU2] 缓存项已过期，执行删除: key=%s\n", key)
 			return nil, false
 		}
 
 		// 项目有效：按照 LRU2 策略，从一级缓存"降级"到二级缓存
 		// 因为刚被访问过，它在二级缓存会成为最新数据（头部）
-		l.buckets[idx][1].put(key, n1.value, deadline, l.onEvicted)
-		fmt.Println("项目有效，将其移至二级缓存")
-		return n1.value, true
+		l.buckets[idx][1].put(key, entry.value, deadline, l.onEvicted)
+		fmt.Printf("[LRU2] 缓存项从一级降级到二级: key=%s\n", key)
+		return entry.value, true
 	}
 
 	// ===== 步骤2：一级缓存未命中，检查二级缓存（温数据） =====
 	// 调用内部 _get 方法获取二级缓存中的条目
 	// 参数 level=1 表示二级缓存（buckets[idx][1]）
-	n2 := l._get(key, idx, 1)
-	if n2 != nil {
+	entry2 := l._get(key, idx, 1)
+	if entry2 != nil {
 		// 在二级缓存中找到，同样需要检查过期时间
-		if n2.deadline > 0 && currentTime >= n2.deadline {
+		if entry2.deadline > 0 && currentTime >= entry2.deadline {
 			// 项目已过期，从两级缓存中彻底删除
 			l.delete(key, idx)
-			fmt.Println("找到项目已过期，删除它")
+			fmt.Printf("[LRU2] 缓存项已过期，执行删除: key=%s\n", key)
 			return nil, false
 		}
 
 		// 二级缓存中找到且未过期，直接返回（不需要移动，保持在二级缓存）
-		return n2.value, true
+		return entry2.value, true
 	}
 
 	// ===== 步骤3：两级缓存都未命中 =====
 	return nil, false
 }
 
-// Set 添加或更新缓存项
+// Set 添加或更新缓存项（永不过期）
 func (l *LRU2Cache) Set(key string, value common.Value) error {
-	return l.SetWithExpiration(key, value, 9999999999999999*time.Nanosecond)
+	idx := l.keyToBucketIndex(key)
+	l.bucketLocks[idx].Lock()
+	defer l.bucketLocks[idx].Unlock()
+
+	// 放入一级缓存，-1 表示永不过期
+	l.buckets[idx][0].put(key, value, -1, l.onEvicted)
+
+	return nil
 }
 
 // SetWithExpiration 添加或更新缓存项，并设置过期时间
 func (l *LRU2Cache) SetWithExpiration(key string, value common.Value, expiration time.Duration) error {
-	// 计算过期时间 - 确保单位一致
-	deadline := int64(0)
+	// 计算过期时间
+	var deadline int64
 	if expiration > 0 {
 		// now() 返回纳秒时间戳，确保 expiration 也是纳秒单位
 		deadline = now() + int64(expiration.Nanoseconds())
+	} else {
+		// 0 或负数表示永不过期
+		deadline = -1
 	}
 
 	idx := l.keyToBucketIndex(key)
@@ -174,8 +184,10 @@ func (l *LRU2Cache) _get(key string, idx, level int32) *cacheEntry {
 	n := l.buckets[idx][level].get(key)
 	if n != nil {
 		currentTime := now()
-		if n.deadline <= 0 || currentTime >= n.deadline {
-			// 过期或已删除
+		// deadline == 0: 已删除
+		// deadline == -1: 永不过期
+		// deadline > 0: 检查是否过期
+		if n.deadline == 0 || (n.deadline > 0 && currentTime >= n.deadline) {
 			return nil
 		}
 		return n

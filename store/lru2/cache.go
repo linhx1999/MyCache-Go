@@ -6,7 +6,7 @@ import "github.com/linhx1999/MyCache-Go/store/common"
 type cacheEntry struct {
 	key      string       // 缓存键
 	value    common.Value // 缓存值
-	deadline int64        // 过期时间戳（纳秒），0 表示已删除，正数表示过期时间点
+	deadline int64        // 过期时间戳（纳秒）：0 表示已删除，-1 表示永不过期，正数表示过期时间点
 }
 
 // cache 是单个 LRU 缓存桶的实现，包含双向链表和节点存储
@@ -79,7 +79,7 @@ func (c *cache) get(key string) *cacheEntry {
 // del 从缓存中删除键对应的项
 // 返回值：缓存条目、是否找到、过期时间
 func (c *cache) del(key string) (*cacheEntry, bool, int64) {
-	if idx, ok := c.keyToIndex[key]; ok && c.entries[idx-1].deadline > 0 {
+	if idx, ok := c.keyToIndex[key]; ok && c.entries[idx-1].deadline != 0 {
 		d := c.entries[idx-1].deadline
 		c.entries[idx-1].deadline = 0 // 标记为已删除
 		c.adjust(idx, tail)           // 移动到链表尾部
@@ -92,7 +92,7 @@ func (c *cache) del(key string) (*cacheEntry, bool, int64) {
 // walk 遍历缓存中的所有有效项
 func (c *cache) walk(walker func(key string, value common.Value, deadline int64) bool) {
 	for idx := c.links[0][next]; idx != 0; idx = c.links[idx][next] {
-		if c.entries[idx-1].deadline > 0 && !walker(c.entries[idx-1].key, c.entries[idx-1].value, c.entries[idx-1].deadline) {
+		if c.entries[idx-1].deadline != 0 && !walker(c.entries[idx-1].key, c.entries[idx-1].value, c.entries[idx-1].deadline) {
 			return
 		}
 	}
