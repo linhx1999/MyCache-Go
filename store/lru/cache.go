@@ -61,7 +61,7 @@ func (l *LRUCache) Get(key string) (common.Value, bool) {
 	l.rwMutex.Lock()
 	// 再次检查元素是否仍然存在（可能在获取写锁期间被其他协程删除）
 	if _, ok := l.elementMap[key]; ok {
-		l.lruList.MoveToBack(elem)
+		l.lruList.MoveToFront(elem)
 	}
 	l.rwMutex.Unlock()
 
@@ -97,13 +97,13 @@ func (l *LRUCache) SetWithExpiration(key string, value common.Value, expiration 
 		entry := elem.Value.(*cacheEntry)
 		l.usedBytes += int64(value.Len() - entry.value.Len())
 		entry.value = value
-		l.lruList.MoveToBack(elem)
+		l.lruList.MoveToFront(elem)
 		return nil
 	}
 
-	// 不存在，添加新项
+	// 不存在，添加新项到链表头部（最近访问）
 	entry := &cacheEntry{key: key, value: value}
-	elem := l.lruList.PushBack(entry)
+	elem := l.lruList.PushFront(entry)
 	l.elementMap[key] = elem
 	l.usedBytes += int64(len(key) + value.Len())
 
@@ -185,9 +185,9 @@ func (c *LRUCache) evict() {
 		}
 	}
 
-	// 再根据内存限制清理最久未使用的项
+	// 再根据内存限制清理最久未使用的项（链表尾部）
 	for c.maxBytes > 0 && c.usedBytes > c.maxBytes && c.lruList.Len() > 0 {
-		elem := c.lruList.Front() // 获取最久未使用的项（链表头部）
+		elem := c.lruList.Back()
 		if elem != nil {
 			c.removeElement(elem)
 		}
