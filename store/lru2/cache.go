@@ -1,7 +1,6 @@
 package lru2
 
 import (
-	"fmt"
 	"sync"
 	"time"
 
@@ -11,7 +10,7 @@ import (
 // LRU2Cache 是两级缓存实现（一级热点缓存 + 二级温数据缓存）
 type LRU2Cache struct {
 	bucketLocks   []sync.Mutex                         // 每个桶对应的锁，用于减少并发冲突
-	buckets       [][2]*cacheBucket                     // 缓存桶数组，每个桶包含两级缓存：[0]一级热点缓存，[1]二级温数据缓存
+	buckets       [][2]*cacheBucket                    // 缓存桶数组，每个桶包含两级缓存：[0]一级热点缓存，[1]二级温数据缓存
 	onEvicted     func(key string, value common.Value) // 缓存项被淘汰时的回调函数
 	cleanupTicker *time.Ticker                         // 过期清理定时器，定期触发过期缓存扫描
 	bucketMask    int32                                // 桶索引掩码，用于通过位运算快速定位桶（hash & bucketMask）
@@ -45,14 +44,14 @@ func (l *LRU2Cache) Get(key string) (common.Value, bool) {
 		if deadline > 0 && currentTime >= deadline {
 			// 项目已过期，从两级缓存中彻底删除
 			l.delete(key, idx)
-			fmt.Printf("[LRU2] 缓存项已过期，执行删除: key=%s\n", key)
+			// fmt.Printf("[LRU2] 缓存项已过期，执行删除: key=%s\n", key)
 			return nil, false
 		}
 
 		// 项目有效：按照 LRU2 策略，从一级缓存"降级"到二级缓存
 		// 因为刚被访问过，它在二级缓存会成为最新数据（头部）
 		l.buckets[idx][1].put(key, entry.value, deadline, l.onEvicted)
-		fmt.Printf("[LRU2] 缓存项从一级降级到二级: key=%s\n", key)
+		// fmt.Printf("[LRU2] 缓存项从一级降级到二级: key=%s\n", key)
 		return entry.value, true
 	}
 
@@ -64,7 +63,7 @@ func (l *LRU2Cache) Get(key string) (common.Value, bool) {
 		if entry2.deadline > 0 && currentTime >= entry2.deadline {
 			// 项目已过期，从两级缓存中彻底删除
 			l.delete(key, idx)
-			fmt.Printf("[LRU2] 缓存项已过期，执行删除: key=%s\n", key)
+			// fmt.Printf("[LRU2] 缓存项已过期，执行删除: key=%s\n", key)
 			return nil, false
 		}
 
