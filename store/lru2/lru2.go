@@ -17,15 +17,15 @@ type LRU2Cache struct {
 	bucketMask    int32             // 桶索引掩码，用于通过位运算快速定位桶（hash & bucketMask）
 }
 
-// bucketIndex 计算 key 所在的桶索引
-func (l *LRU2Cache) bucketIndex(key string) int32 {
+// keyToBucketIndex 计算 key 所在的桶索引
+func (l *LRU2Cache) keyToBucketIndex(key string) int32 {
 	return hashBKRD(key) & l.bucketMask
 }
 
 // Get 获取缓存项
 func (l *LRU2Cache) Get(key string) (common.Value, bool) {
 	// 计算 key 所在的桶索引：BKDR哈希 & 桶掩码，实现快速定位
-	idx := l.bucketIndex(key)
+	idx := l.keyToBucketIndex(key)
 
 	// 获取该桶的锁，保证并发安全；使用细粒度锁减少锁竞争
 	l.bucketLocks[idx].Lock()
@@ -91,7 +91,7 @@ func (l *LRU2Cache) SetWithExpiration(key string, value common.Value, expiration
 		deadline = now() + int64(expiration.Nanoseconds())
 	}
 
-	idx := l.bucketIndex(key)
+	idx := l.keyToBucketIndex(key)
 	l.bucketLocks[idx].Lock()
 	defer l.bucketLocks[idx].Unlock()
 
@@ -103,7 +103,7 @@ func (l *LRU2Cache) SetWithExpiration(key string, value common.Value, expiration
 
 // Delete 从缓存中删除指定键的项
 func (l *LRU2Cache) Delete(key string) bool {
-	idx := l.bucketIndex(key)
+	idx := l.keyToBucketIndex(key)
 	l.bucketLocks[idx].Lock()
 	defer l.bucketLocks[idx].Unlock()
 
