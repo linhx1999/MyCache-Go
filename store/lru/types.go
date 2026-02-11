@@ -10,7 +10,7 @@ import (
 
 // LRU 是基于标准库 list 的 LRU 缓存实现
 type LRU struct {
-	mu              sync.RWMutex
+	rwMutex         sync.RWMutex
 	lruList         *list.List                           // 双向链表，用于维护 LRU 顺序
 	entries         map[string]*list.Element             // 键到链表节点的映射
 	expirationMap   map[string]time.Time                 // 过期时间映射

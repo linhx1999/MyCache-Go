@@ -7,8 +7,8 @@ import (
 
 // Delete 从缓存中删除指定键的项
 func (c *LRU) Delete(key string) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.rwMutex.Lock()
+	defer c.rwMutex.Unlock()
 
 	if elem, ok := c.entries[key]; ok {
 		c.removeElement(elem)
@@ -19,8 +19,8 @@ func (c *LRU) Delete(key string) bool {
 
 // Clear 清空缓存
 func (c *LRU) Clear() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.rwMutex.Lock()
+	defer c.rwMutex.Unlock()
 
 	// 遍历所有项调用回调函数
 	for _, elem := range c.entries {
@@ -38,8 +38,8 @@ func (c *LRU) Clear() {
 
 // Len 返回缓存中的项数
 func (c *LRU) Len() int {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	c.rwMutex.RLock()
+	defer c.rwMutex.RUnlock()
 	return c.lruList.Len()
 }
 
@@ -91,9 +91,9 @@ func (c *LRU) cleanupLoop() {
 	for {
 		select {
 		case <-c.cleanupTicker.C:
-			c.mu.Lock()
+			c.rwMutex.Lock()
 			c.evict()
-			c.mu.Unlock()
+			c.rwMutex.Unlock()
 		case <-c.doneCh:
 			return
 		}

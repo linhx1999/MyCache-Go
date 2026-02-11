@@ -8,16 +8,16 @@ import (
 
 // Get 获取缓存项，如果存在且未过期则返回
 func (c *LRU) Get(key string) (common.Value, bool) {
-	c.mu.RLock()
+	c.rwMutex.RLock()
 	elem, ok := c.entries[key]
 	if !ok {
-		c.mu.RUnlock()
+		c.rwMutex.RUnlock()
 		return nil, false
 	}
 
 	// 检查是否过期
 	if expTime, hasExp := c.expirationMap[key]; hasExp && time.Now().After(expTime) {
-		c.mu.RUnlock()
+		c.rwMutex.RUnlock()
 
 		// 异步删除过期项，避免在读锁内操作
 		go c.Delete(key)
@@ -28,15 +28,15 @@ func (c *LRU) Get(key string) (common.Value, bool) {
 	// 获取值并释放读锁
 	entry := elem.Value.(*cacheEntry)
 	value := entry.value
-	c.mu.RUnlock()
+	c.rwMutex.RUnlock()
 
 	// 更新 LRU 位置需要写锁
-	c.mu.Lock()
+	c.rwMutex.Lock()
 	// 再次检查元素是否仍然存在（可能在获取写锁期间被其他协程删除）
 	if _, ok := c.entries[key]; ok {
 		c.lruList.MoveToBack(elem)
 	}
-	c.mu.Unlock()
+	c.rwMutex.Unlock()
 
 	return value, true
 }
@@ -53,8 +53,8 @@ func (c *LRU) SetWithExpiration(key string, value common.Value, expiration time.
 		return nil
 	}
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.rwMutex.Lock()
+	defer c.rwMutex.Unlock()
 
 	// 计算过期时间
 	var expTime time.Time
