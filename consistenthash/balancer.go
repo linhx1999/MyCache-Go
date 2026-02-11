@@ -2,7 +2,6 @@ package consistenthash
 
 import (
 	"math"
-	"sort"
 	"sync/atomic"
 	"time"
 )
@@ -97,8 +96,7 @@ func (r *HashRing) rebalanceNodes() {
 	}
 	atomic.StoreInt64(&r.totalRequests, 0)
 
-	// 重新排序
-	sort.Ints(r.keys)
+	r.sortKeys()
 }
 
 // GetStats 获取负载统计信息

@@ -60,8 +60,7 @@ func (r *HashRing) Add(nodes ...string) error {
 		r.addNode(node, r.config.DefaultReplicas)
 	}
 
-	// 重新排序
-	sort.Ints(r.keys)
+	r.sortKeys()
 	return nil
 }
 
@@ -136,4 +135,10 @@ func (r *HashRing) addNode(node string, replicas int) {
 		r.hashMap[hash] = node
 	}
 	r.nodeReplicas[node] = replicas
+}
+
+// sortKeys 对哈希环的键进行排序
+// 在添加或删除虚拟节点后调用，确保二分查找的前提条件
+func (r *HashRing) sortKeys() {
+	sort.Ints(r.keys)
 }
