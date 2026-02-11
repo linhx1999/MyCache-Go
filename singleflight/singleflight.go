@@ -13,15 +13,15 @@ type call struct {
 
 // Group 用于管理并发请求，确保相同 key 的请求只执行一次
 type Group struct {
-	m sync.Map // key -> *call，存储正在执行的请求
+	callsMap sync.Map // key -> *call，存储正在执行的请求
 }
 
 // Do 执行给定函数 fn，并确保对于相同的 key，在任意时刻只有一个 fn 正在执行
 // 如果已有相同 key 的请求正在执行，则等待其完成并共享结果
 func (g *Group) Do(key string, fn func() (interface{}, error)) (interface{}, error) {
 	// 检查是否已有正在执行的请求
-	if existing, ok := g.m.Load(key); ok {
-		c := existing.(*call)
+	if existingCall, ok := g.callsMap.Load(key); ok {
+		c := existingCall.(*call)
 		c.waitGroup.Wait()    // 等待正在执行的请求完成
 		return c.value, c.err // 复用已完成的请求结果
 	}
@@ -29,14 +29,14 @@ func (g *Group) Do(key string, fn func() (interface{}, error)) (interface{}, err
 	// 没有正在执行的请求，创建新的请求
 	c := &call{}
 	c.waitGroup.Add(1)
-	g.m.Store(key, c) // 存储到 map 中，让其他相同 key 的请求能够发现
+	g.callsMap.Store(key, c) // 存储到 map 中，让其他相同 key 的请求能够发现
 
 	// 执行函数并记录结果
 	c.value, c.err = fn()
 	c.waitGroup.Done() // 通知所有等待的请求，当前请求已完成
 
 	// 请求完成后从 map 中移除，释放内存
-	g.m.Delete(key)
+	g.callsMap.Delete(key)
 
 	return c.value, c.err
 }
