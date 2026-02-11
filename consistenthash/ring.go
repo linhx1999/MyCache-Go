@@ -79,8 +79,8 @@ func (r *HashRing) Remove(node string) error {
 	}
 
 	// 移除节点的所有虚拟节点
-	for i := 0; i < replicas; i++ {
-		hash := int(r.config.HashFunc([]byte(fmt.Sprintf("%s-%d", node, i))))
+	for replicaIdx := 0; replicaIdx < replicas; replicaIdx++ {
+		hash := r.hashVirtualNode(node, replicaIdx)
 		delete(r.hashMap, hash)
 		for j := 0; j < len(r.keys); j++ {
 			if r.keys[j] == hash {
@@ -127,14 +127,23 @@ func (r *HashRing) Get(key string) string {
 	return node
 }
 
-// addNode 添加节点的虚拟节点
+// addNode 为指定节点创建指定数量的虚拟节点（replicas）
+// 每个虚拟节点通过在节点名后添加索引（如 "node-0", "node-1"）生成唯一哈希值
+// 这些虚拟节点均匀分布在哈希环上，实现负载均衡
 func (r *HashRing) addNode(node string, replicas int) {
-	for i := 0; i < replicas; i++ {
-		hash := int(r.config.HashFunc([]byte(fmt.Sprintf("%s-%d", node, i))))
+	for replicaIdx := 0; replicaIdx < replicas; replicaIdx++ {
+		hash := r.hashVirtualNode(node, replicaIdx)
 		r.keys = append(r.keys, hash)
 		r.hashMap[hash] = node
 	}
 	r.nodeReplicas[node] = replicas
+}
+
+// hashVirtualNode 计算虚拟节点的哈希值
+// 虚拟节点命名格式："{node}-{replicaIdx}"，如 "192.168.1.1:8001-0"
+func (r *HashRing) hashVirtualNode(node string, replicaIdx int) int {
+	virtualKey := fmt.Sprintf("%s-%d", node, replicaIdx)
+	return int(r.config.HashFunc([]byte(virtualKey)))
 }
 
 // sortKeys 对哈希环的键进行排序
