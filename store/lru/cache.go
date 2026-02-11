@@ -8,8 +8,8 @@ import (
 	"github.com/linhx1999/MyCache-Go/store/common"
 )
 
-// Cache 是基于标准库 list 的 LRU 缓存实现
-type Cache struct {
+// LRU 是基于标准库 list 的 LRU 缓存实现
+type LRU struct {
 	mu              sync.RWMutex
 	lruList         *list.List                      // 双向链表，用于维护 LRU 顺序
 	entries         map[string]*list.Element        // 键到链表节点的映射
@@ -29,7 +29,7 @@ type cacheEntry struct {
 }
 
 // New 创建一个新的 LRU 缓存实例
-func New(maxBytes int64, cleanupInterval time.Duration, onEvicted func(string, common.Value)) *Cache {
+func New(maxBytes int64, cleanupInterval time.Duration, onEvicted func(string, common.Value)) *LRU {
 	// 设置默认清理间隔
 	if cleanupInterval <= 0 {
 		cleanupInterval = time.Minute
@@ -40,7 +40,7 @@ func New(maxBytes int64, cleanupInterval time.Duration, onEvicted func(string, c
 		maxBytes = 8 * 1024 * 1024 // 8MB
 	}
 
-	c := &Cache{
+	c := &LRU{
 		lruList:         list.New(),
 		entries:         make(map[string]*list.Element),
 		expirationMap:   make(map[string]time.Time),
@@ -58,7 +58,7 @@ func New(maxBytes int64, cleanupInterval time.Duration, onEvicted func(string, c
 }
 
 // Get 获取缓存项，如果存在且未过期则返回
-func (c *Cache) Get(key string) (common.Value, bool) {
+func (c *LRU) Get(key string) (common.Value, bool) {
 	c.mu.RLock()
 	elem, ok := c.entries[key]
 	if !ok {
@@ -93,12 +93,12 @@ func (c *Cache) Get(key string) (common.Value, bool) {
 }
 
 // Set 添加或更新缓存项
-func (c *Cache) Set(key string, value common.Value) error {
+func (c *LRU) Set(key string, value common.Value) error {
 	return c.SetWithExpiration(key, value, 0)
 }
 
 // SetWithExpiration 添加或更新缓存项，并设置过期时间
-func (c *Cache) SetWithExpiration(key string, value common.Value, expiration time.Duration) error {
+func (c *LRU) SetWithExpiration(key string, value common.Value, expiration time.Duration) error {
 	if value == nil {
 		c.Delete(key)
 		return nil
@@ -138,7 +138,7 @@ func (c *Cache) SetWithExpiration(key string, value common.Value, expiration tim
 }
 
 // Delete 从缓存中删除指定键的项
-func (c *Cache) Delete(key string) bool {
+func (c *LRU) Delete(key string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -150,7 +150,7 @@ func (c *Cache) Delete(key string) bool {
 }
 
 // Clear 清空缓存
-func (c *Cache) Clear() {
+func (c *LRU) Clear() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -169,14 +169,14 @@ func (c *Cache) Clear() {
 }
 
 // Len 返回缓存中的项数
-func (c *Cache) Len() int {
+func (c *LRU) Len() int {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.lruList.Len()
 }
 
 // Close 关闭缓存，停止清理协程
-func (c *Cache) Close() {
+func (c *LRU) Close() {
 	if c.cleanupTicker != nil {
 		c.cleanupTicker.Stop()
 		close(c.doneCh)
@@ -184,7 +184,7 @@ func (c *Cache) Close() {
 }
 
 // removeElement 从缓存中删除元素，调用此方法前必须持有锁
-func (c *Cache) removeElement(elem *list.Element) {
+func (c *LRU) removeElement(elem *list.Element) {
 	entry := elem.Value.(*cacheEntry)
 	c.lruList.Remove(elem)
 	delete(c.entries, entry.key)
@@ -198,7 +198,7 @@ func (c *Cache) removeElement(elem *list.Element) {
 }
 
 // evict 清理过期和超出内存限制的缓存，调用此方法前必须持有锁
-func (c *Cache) evict() {
+func (c *LRU) evict() {
 	// 先清理过期项
 	now := time.Now()
 	for key, expTime := range c.expirationMap {
@@ -219,7 +219,7 @@ func (c *Cache) evict() {
 }
 
 // cleanupLoop 定期清理过期缓存的协程
-func (c *Cache) cleanupLoop() {
+func (c *LRU) cleanupLoop() {
 	for {
 		select {
 		case <-c.cleanupTicker.C:
