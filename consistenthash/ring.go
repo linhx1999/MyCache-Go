@@ -82,8 +82,8 @@ func (r *HashRing) Remove(node string) error {
 	for replicaIdx := 0; replicaIdx < replicas; replicaIdx++ {
 		hash := r.hashVirtualNode(node, replicaIdx)
 		delete(r.hashMap, hash)
-		for j := 0; j < len(r.keys); j++ {
-			if r.keys[j] == hash {
+		for j, key := range r.keys {
+			if key == hash {
 				r.keys = append(r.keys[:j], r.keys[j+1:]...)
 				break
 			}
@@ -108,7 +108,7 @@ func (r *HashRing) Get(key string) string {
 		return ""
 	}
 
-	hash := int(r.config.HashFunc([]byte(key)))
+	hash := r.hash(key)
 	// 二分查找
 	idx := sort.Search(len(r.keys), func(i int) bool {
 		return r.keys[i] >= hash
@@ -143,7 +143,12 @@ func (r *HashRing) addNode(node string, replicas int) {
 // 虚拟节点命名格式："{node}-{replicaIdx}"，如 "192.168.1.1:8001-0"
 func (r *HashRing) hashVirtualNode(node string, replicaIdx int) int {
 	virtualKey := fmt.Sprintf("%s-%d", node, replicaIdx)
-	return int(r.config.HashFunc([]byte(virtualKey)))
+	return r.hash(virtualKey)
+}
+
+// hash 计算给定 key 的哈希值
+func (r *HashRing) hash(key string) int {
+	return int(r.config.HashFunc([]byte(key)))
 }
 
 // sortKeys 对哈希环的键进行排序
