@@ -14,7 +14,7 @@ const minSampleSize = 1000
 //
 // 算法逻辑：
 // 1. 收集每个节点的请求次数，计算平均负载
-// 2. 找出与平均负载偏差最大的节点（以比例计算）
+// 2. 计算所有节点与平均负载的最大偏差比例
 // 3. 如果最大偏差超过阈值（如25%），触发重平衡
 // 4. 重平衡策略：高负载节点减少虚拟节点，低负载节点增加虚拟节点
 func (r *HashRing) checkAndRebalance() {
@@ -27,7 +27,7 @@ func (r *HashRing) checkAndRebalance() {
 	// 计算平均每个节点应该处理的请求数
 	avgLoad := float64(totalRequests) / float64(len(r.nodeReplicas))
 
-	// 找出负载偏差最大的节点
+	// 计算最大负载偏差比例
 	maxDeviationRatio := r.calculateMaxDeviation(avgLoad)
 
 	// 当最大偏差超过配置的阈值时，触发重平衡
