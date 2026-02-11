@@ -8,8 +8,8 @@ import (
 	"github.com/linhx1999/MyCache-Go/store/common"
 )
 
-// LRU2 是两级缓存实现（一级热点缓存 + 二级温数据缓存）
-type LRU2 struct {
+// LRU2Cache 是两级缓存实现（一级热点缓存 + 二级温数据缓存）
+type LRU2Cache struct {
 	bucketLocks   []sync.Mutex      // 每个桶对应的锁，用于减少并发冲突
 	buckets       [][2]*cache       // 缓存桶数组，每个桶包含两级缓存：[0]一级热点缓存，[1]二级温数据缓存
 	onEvicted     func(key string, value common.Value) // 缓存项被淘汰时的回调函数
@@ -17,44 +17,8 @@ type LRU2 struct {
 	bucketMask    int32             // 桶索引掩码，用于通过位运算快速定位桶（hash & bucketMask）
 }
 
-// New 创建一个新的 LRU2 缓存实例
-func New(bucketCount, capPerBucket, level2Cap uint16, cleanupInterval time.Duration, onEvicted func(string, common.Value)) *LRU2 {
-	if bucketCount == 0 {
-		bucketCount = 16
-	}
-	if capPerBucket == 0 {
-		capPerBucket = 1024
-	}
-	if level2Cap == 0 {
-		level2Cap = 1024
-	}
-	if cleanupInterval <= 0 {
-		cleanupInterval = time.Minute
-	}
-
-	mask := maskOfNextPowOf2(bucketCount)
-	c := &LRU2{
-		bucketLocks:   make([]sync.Mutex, mask+1),
-		buckets:       make([][2]*cache, mask+1),
-		onEvicted:     onEvicted,
-		cleanupTicker: time.NewTicker(cleanupInterval),
-		bucketMask:    int32(mask),
-	}
-
-	for i := range c.buckets {
-		c.buckets[i][0] = createCache(capPerBucket)
-		c.buckets[i][1] = createCache(level2Cap)
-	}
-
-	if cleanupInterval > 0 {
-		go c.cleanupLoop()
-	}
-
-	return c
-}
-
 // Get 获取缓存项
-func (c *LRU2) Get(key string) (common.Value, bool) {
+func (c *LRU2Cache) Get(key string) (common.Value, bool) {
 	// 计算 key 所在的桶索引：BKDR哈希 & 桶掩码，实现快速定位
 	idx := hashBKRD(key) & c.bucketMask
 
@@ -109,12 +73,12 @@ func (c *LRU2) Get(key string) (common.Value, bool) {
 }
 
 // Set 添加或更新缓存项
-func (c *LRU2) Set(key string, value common.Value) error {
+func (c *LRU2Cache) Set(key string, value common.Value) error {
 	return c.SetWithExpiration(key, value, 9999999999999999*time.Nanosecond)
 }
 
 // SetWithExpiration 添加或更新缓存项，并设置过期时间
-func (c *LRU2) SetWithExpiration(key string, value common.Value, expiration time.Duration) error {
+func (c *LRU2Cache) SetWithExpiration(key string, value common.Value, expiration time.Duration) error {
 	// 计算过期时间 - 确保单位一致
 	deadline := int64(0)
 	if expiration > 0 {
@@ -133,7 +97,7 @@ func (c *LRU2) SetWithExpiration(key string, value common.Value, expiration time
 }
 
 // Delete 从缓存中删除指定键的项
-func (c *LRU2) Delete(key string) bool {
+func (c *LRU2Cache) Delete(key string) bool {
 	idx := hashBKRD(key) & c.bucketMask
 	c.bucketLocks[idx].Lock()
 	defer c.bucketLocks[idx].Unlock()
@@ -142,7 +106,7 @@ func (c *LRU2) Delete(key string) bool {
 }
 
 // Clear 清空缓存
-func (c *LRU2) Clear() {
+func (c *LRU2Cache) Clear() {
 	var keys []string
 
 	for i := range c.buckets {
@@ -172,7 +136,7 @@ func (c *LRU2) Clear() {
 }
 
 // Len 返回缓存中的项数
-func (c *LRU2) Len() int {
+func (c *LRU2Cache) Len() int {
 	count := 0
 
 	for i := range c.buckets {
@@ -194,14 +158,14 @@ func (c *LRU2) Len() int {
 }
 
 // Close 关闭缓存，停止清理协程
-func (c *LRU2) Close() {
+func (c *LRU2Cache) Close() {
 	if c.cleanupTicker != nil {
 		c.cleanupTicker.Stop()
 	}
 }
 
 // _get 内部方法，从指定级别的缓存获取项
-func (c *LRU2) _get(key string, idx, level int32) *cacheEntry {
+func (c *LRU2Cache) _get(key string, idx, level int32) *cacheEntry {
 	n := c.buckets[idx][level].get(key)
 	if n != nil {
 		currentTime := now()
@@ -216,7 +180,7 @@ func (c *LRU2) _get(key string, idx, level int32) *cacheEntry {
 }
 
 // delete 内部删除方法
-func (c *LRU2) delete(key string, idx int32) bool {
+func (c *LRU2Cache) delete(key string, idx int32) bool {
 	n1, found1, _ := c.buckets[idx][0].del(key)
 	n2, found2, _ := c.buckets[idx][1].del(key)
 	deleted := found1 || found2
@@ -234,7 +198,7 @@ func (c *LRU2) delete(key string, idx int32) bool {
 }
 
 // cleanupLoop 定期清理过期缓存的协程
-func (c *LRU2) cleanupLoop() {
+func (c *LRU2Cache) cleanupLoop() {
 	for range c.cleanupTicker.C {
 		currentTime := now()
 
