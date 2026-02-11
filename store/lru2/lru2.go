@@ -10,11 +10,11 @@ import (
 
 // LRU2Cache 是两级缓存实现（一级热点缓存 + 二级温数据缓存）
 type LRU2Cache struct {
-	bucketLocks   []sync.Mutex      // 每个桶对应的锁，用于减少并发冲突
-	buckets       [][2]*cache       // 缓存桶数组，每个桶包含两级缓存：[0]一级热点缓存，[1]二级温数据缓存
+	bucketLocks   []sync.Mutex                         // 每个桶对应的锁，用于减少并发冲突
+	buckets       [][2]*cache                          // 缓存桶数组，每个桶包含两级缓存：[0]一级热点缓存，[1]二级温数据缓存
 	onEvicted     func(key string, value common.Value) // 缓存项被淘汰时的回调函数
-	cleanupTicker *time.Ticker      // 过期清理定时器，定期触发过期缓存扫描
-	bucketMask    int32             // 桶索引掩码，用于通过位运算快速定位桶（hash & bucketMask）
+	cleanupTicker *time.Ticker                         // 过期清理定时器，定期触发过期缓存扫描
+	bucketMask    int32                                // 桶索引掩码，用于通过位运算快速定位桶（hash & bucketMask）
 }
 
 // keyToBucketIndex 计算 key 所在的桶索引
@@ -57,9 +57,8 @@ func (l *LRU2Cache) Get(key string) (common.Value, bool) {
 	}
 
 	// ===== 步骤2：一级缓存未命中，检查二级缓存（温数据） =====
-	// 调用内部 _get 方法获取二级缓存中的条目
-	// 参数 level=1 表示二级缓存（buckets[idx][1]）
-	entry2 := l._get(key, idx, 1)
+	// 从二级缓存获取条目（包含过期检查）
+	entry2 := l.getFromLevel(key, idx, 1)
 	if entry2 != nil {
 		// 在二级缓存中找到，同样需要检查过期时间
 		if entry2.deadline > 0 && currentTime >= entry2.deadline {
@@ -97,7 +96,7 @@ func (l *LRU2Cache) SetWithExpiration(key string, value common.Value, expiration
 		// now() 返回纳秒时间戳，确保 expiration 也是纳秒单位
 		deadline = now() + int64(expiration.Nanoseconds())
 	} else {
-		// 0 或负数表示永不过期
+		// 负数表示永不过期
 		deadline = -1
 	}
 
@@ -179,8 +178,8 @@ func (l *LRU2Cache) Close() {
 	}
 }
 
-// _get 内部方法，从指定级别的缓存获取项
-func (l *LRU2Cache) _get(key string, idx, level int32) *cacheEntry {
+// getFromLevel 从指定级别的缓存获取条目（包含过期检查）
+func (l *LRU2Cache) getFromLevel(key string, idx, level int32) *cacheEntry {
 	n := l.buckets[idx][level].get(key)
 	if n != nil {
 		currentTime := now()
