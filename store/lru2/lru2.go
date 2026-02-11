@@ -18,13 +18,13 @@ type LRU2Cache struct {
 }
 
 // Get 获取缓存项
-func (c *LRU2Cache) Get(key string) (common.Value, bool) {
+func (l *LRU2Cache) Get(key string) (common.Value, bool) {
 	// 计算 key 所在的桶索引：BKDR哈希 & 桶掩码，实现快速定位
-	idx := hashBKRD(key) & c.bucketMask
+	idx := hashBKRD(key) & l.bucketMask
 
 	// 获取该桶的锁，保证并发安全；使用细粒度锁减少锁竞争
-	c.bucketLocks[idx].Lock()
-	defer c.bucketLocks[idx].Unlock()
+	l.bucketLocks[idx].Lock()
+	defer l.bucketLocks[idx].Unlock()
 
 	// 获取当前时间戳（纳秒），用于判断是否过期
 	currentTime := now()
@@ -32,21 +32,21 @@ func (c *LRU2Cache) Get(key string) (common.Value, bool) {
 	// ===== 步骤1：首先检查一级缓存（热点数据） =====
 	// 使用 del 从一级缓存"删除"该 key（如果存在），以便后续移动到二级缓存
 	// n1: 缓存条目指针, found: 是否找到, deadline: 过期时间点（0表示永不过期）
-	n1, found, deadline := c.buckets[idx][0].del(key)
+	n1, found, deadline := l.buckets[idx][0].del(key)
 	if found {
 		// 在一级缓存中找到该 key
 
 		// 检查是否已过期：deadline > 0 表示设置了过期时间，且当前时间已超过 deadline
 		if deadline > 0 && currentTime >= deadline {
 			// 项目已过期，从两级缓存中彻底删除
-			c.delete(key, idx)
+			l.delete(key, idx)
 			fmt.Println("找到项目已过期，删除它")
 			return nil, false
 		}
 
 		// 项目有效：按照 LRU2 策略，从一级缓存"降级"到二级缓存
 		// 因为刚被访问过，它在二级缓存会成为最新数据（头部）
-		c.buckets[idx][1].put(key, n1.value, deadline, c.onEvicted)
+		l.buckets[idx][1].put(key, n1.value, deadline, l.onEvicted)
 		fmt.Println("项目有效，将其移至二级缓存")
 		return n1.value, true
 	}
@@ -54,12 +54,12 @@ func (c *LRU2Cache) Get(key string) (common.Value, bool) {
 	// ===== 步骤2：一级缓存未命中，检查二级缓存（温数据） =====
 	// 调用内部 _get 方法获取二级缓存中的条目
 	// 参数 level=1 表示二级缓存（buckets[idx][1]）
-	n2 := c._get(key, idx, 1)
+	n2 := l._get(key, idx, 1)
 	if n2 != nil {
 		// 在二级缓存中找到，同样需要检查过期时间
 		if n2.deadline > 0 && currentTime >= n2.deadline {
 			// 项目已过期，从两级缓存中彻底删除
-			c.delete(key, idx)
+			l.delete(key, idx)
 			fmt.Println("找到项目已过期，删除它")
 			return nil, false
 		}
@@ -73,12 +73,12 @@ func (c *LRU2Cache) Get(key string) (common.Value, bool) {
 }
 
 // Set 添加或更新缓存项
-func (c *LRU2Cache) Set(key string, value common.Value) error {
-	return c.SetWithExpiration(key, value, 9999999999999999*time.Nanosecond)
+func (l *LRU2Cache) Set(key string, value common.Value) error {
+	return l.SetWithExpiration(key, value, 9999999999999999*time.Nanosecond)
 }
 
 // SetWithExpiration 添加或更新缓存项，并设置过期时间
-func (c *LRU2Cache) SetWithExpiration(key string, value common.Value, expiration time.Duration) error {
+func (l *LRU2Cache) SetWithExpiration(key string, value common.Value, expiration time.Duration) error {
 	// 计算过期时间 - 确保单位一致
 	deadline := int64(0)
 	if expiration > 0 {
@@ -86,37 +86,37 @@ func (c *LRU2Cache) SetWithExpiration(key string, value common.Value, expiration
 		deadline = now() + int64(expiration.Nanoseconds())
 	}
 
-	idx := hashBKRD(key) & c.bucketMask
-	c.bucketLocks[idx].Lock()
-	defer c.bucketLocks[idx].Unlock()
+	idx := hashBKRD(key) & l.bucketMask
+	l.bucketLocks[idx].Lock()
+	defer l.bucketLocks[idx].Unlock()
 
 	// 放入一级缓存
-	c.buckets[idx][0].put(key, value, deadline, c.onEvicted)
+	l.buckets[idx][0].put(key, value, deadline, l.onEvicted)
 
 	return nil
 }
 
 // Delete 从缓存中删除指定键的项
-func (c *LRU2Cache) Delete(key string) bool {
-	idx := hashBKRD(key) & c.bucketMask
-	c.bucketLocks[idx].Lock()
-	defer c.bucketLocks[idx].Unlock()
+func (l *LRU2Cache) Delete(key string) bool {
+	idx := hashBKRD(key) & l.bucketMask
+	l.bucketLocks[idx].Lock()
+	defer l.bucketLocks[idx].Unlock()
 
-	return c.delete(key, idx)
+	return l.delete(key, idx)
 }
 
 // Clear 清空缓存
-func (c *LRU2Cache) Clear() {
+func (l *LRU2Cache) Clear() {
 	var keys []string
 
-	for i := range c.buckets {
-		c.bucketLocks[i].Lock()
+	for i := range l.buckets {
+		l.bucketLocks[i].Lock()
 
-		c.buckets[i][0].walk(func(key string, value common.Value, deadline int64) bool {
+		l.buckets[i][0].walk(func(key string, value common.Value, deadline int64) bool {
 			keys = append(keys, key)
 			return true
 		})
-		c.buckets[i][1].walk(func(key string, value common.Value, deadline int64) bool {
+		l.buckets[i][1].walk(func(key string, value common.Value, deadline int64) bool {
 			// 检查键是否已经收集（避免重复）
 			for _, k := range keys {
 				if key == k {
@@ -127,46 +127,46 @@ func (c *LRU2Cache) Clear() {
 			return true
 		})
 
-		c.bucketLocks[i].Unlock()
+		l.bucketLocks[i].Unlock()
 	}
 
 	for _, key := range keys {
-		c.Delete(key)
+		l.Delete(key)
 	}
 }
 
 // Len 返回缓存中的项数
-func (c *LRU2Cache) Len() int {
+func (l *LRU2Cache) Len() int {
 	count := 0
 
-	for i := range c.buckets {
-		c.bucketLocks[i].Lock()
+	for i := range l.buckets {
+		l.bucketLocks[i].Lock()
 
-		c.buckets[i][0].walk(func(key string, value common.Value, deadline int64) bool {
+		l.buckets[i][0].walk(func(key string, value common.Value, deadline int64) bool {
 			count++
 			return true
 		})
-		c.buckets[i][1].walk(func(key string, value common.Value, deadline int64) bool {
+		l.buckets[i][1].walk(func(key string, value common.Value, deadline int64) bool {
 			count++
 			return true
 		})
 
-		c.bucketLocks[i].Unlock()
+		l.bucketLocks[i].Unlock()
 	}
 
 	return count
 }
 
 // Close 关闭缓存，停止清理协程
-func (c *LRU2Cache) Close() {
-	if c.cleanupTicker != nil {
-		c.cleanupTicker.Stop()
+func (l *LRU2Cache) Close() {
+	if l.cleanupTicker != nil {
+		l.cleanupTicker.Stop()
 	}
 }
 
 // _get 内部方法，从指定级别的缓存获取项
-func (c *LRU2Cache) _get(key string, idx, level int32) *cacheEntry {
-	n := c.buckets[idx][level].get(key)
+func (l *LRU2Cache) _get(key string, idx, level int32) *cacheEntry {
+	n := l.buckets[idx][level].get(key)
 	if n != nil {
 		currentTime := now()
 		if n.deadline <= 0 || currentTime >= n.deadline {
@@ -180,17 +180,17 @@ func (c *LRU2Cache) _get(key string, idx, level int32) *cacheEntry {
 }
 
 // delete 内部删除方法
-func (c *LRU2Cache) delete(key string, idx int32) bool {
-	n1, found1, _ := c.buckets[idx][0].del(key)
-	n2, found2, _ := c.buckets[idx][1].del(key)
+func (l *LRU2Cache) delete(key string, idx int32) bool {
+	n1, found1, _ := l.buckets[idx][0].del(key)
+	n2, found2, _ := l.buckets[idx][1].del(key)
 	deleted := found1 || found2
 
 	// 调用淘汰回调函数
 	if deleted {
-		if n1 != nil && n1.value != nil && c.onEvicted != nil {
-			c.onEvicted(key, n1.value)
-		} else if n2 != nil && n2.value != nil && c.onEvicted != nil {
-			c.onEvicted(key, n2.value)
+		if n1 != nil && n1.value != nil && l.onEvicted != nil {
+			l.onEvicted(key, n1.value)
+		} else if n2 != nil && n2.value != nil && l.onEvicted != nil {
+			l.onEvicted(key, n2.value)
 		}
 	}
 
@@ -198,24 +198,24 @@ func (c *LRU2Cache) delete(key string, idx int32) bool {
 }
 
 // cleanupLoop 定期清理过期缓存的协程
-func (c *LRU2Cache) cleanupLoop() {
-	for range c.cleanupTicker.C {
+func (l *LRU2Cache) cleanupLoop() {
+	for range l.cleanupTicker.C {
 		currentTime := now()
 
-		for i := range c.buckets {
-			c.bucketLocks[i].Lock()
+		for i := range l.buckets {
+			l.bucketLocks[i].Lock()
 
 			// 检查并清理过期项目
 			var expiredKeys []string
 
-			c.buckets[i][0].walk(func(key string, value common.Value, deadline int64) bool {
+			l.buckets[i][0].walk(func(key string, value common.Value, deadline int64) bool {
 				if deadline > 0 && currentTime >= deadline {
 					expiredKeys = append(expiredKeys, key)
 				}
 				return true
 			})
 
-			c.buckets[i][1].walk(func(key string, value common.Value, deadline int64) bool {
+			l.buckets[i][1].walk(func(key string, value common.Value, deadline int64) bool {
 				if deadline > 0 && currentTime >= deadline {
 					for _, k := range expiredKeys {
 						if key == k {
@@ -229,10 +229,10 @@ func (c *LRU2Cache) cleanupLoop() {
 			})
 
 			for _, key := range expiredKeys {
-				c.delete(key, int32(i))
+				l.delete(key, int32(i))
 			}
 
-			c.bucketLocks[i].Unlock()
+			l.bucketLocks[i].Unlock()
 		}
 	}
 }
