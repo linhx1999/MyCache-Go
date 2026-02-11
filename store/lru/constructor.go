@@ -21,7 +21,7 @@ func New(maxBytes int64, cleanupInterval time.Duration, onEvicted func(string, c
 
 	c := &LRUCache{
 		lruList:         list.New(),
-		entries:         make(map[string]*list.Element),
+		elementMap:      make(map[string]*list.Element),
 		expirationMap:   make(map[string]time.Time),
 		maxBytes:        maxBytes,
 		onEvicted:       onEvicted,

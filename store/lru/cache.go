@@ -10,16 +10,21 @@ import (
 
 // LRUCache 是基于标准库 list 的 LRU 缓存实现
 type LRUCache struct {
-	rwMutex         sync.RWMutex
-	lruList         *list.List                           // 双向链表，用于维护 LRU 顺序
-	entries         map[string]*list.Element             // 键到链表节点的映射
-	expirationMap   map[string]time.Time                 // 过期时间映射
-	maxBytes        int64                                // 最大允许字节数
-	usedBytes       int64                                // 当前使用的字节数
-	onEvicted       func(key string, value common.Value) // 淘汰回调函数，当缓存项被淘汰时调用
-	cleanupInterval time.Duration                        // 定期清理过期缓存的时间间隔
-	cleanupTicker   *time.Ticker                         // 定时器，用于触发定期清理任务
-	doneCh          chan struct{}                        // 用于优雅关闭清理协程
+	rwMutex sync.RWMutex
+
+	lruList    *list.List               // 双向链表，用于维护 LRU 顺序
+	elementMap map[string]*list.Element // 键到链表节点的映射
+
+	maxBytes  int64 // 最大允许字节数
+	usedBytes int64 // 当前使用的字节数
+
+	expirationMap map[string]time.Time // 过期时间映射
+
+	onEvicted func(key string, value common.Value) // 淘汰回调函数，当缓存项被淘汰时调用
+
+	cleanupInterval time.Duration // 定期清理过期缓存的时间间隔
+	cleanupTicker   *time.Ticker  // 定时器，用于触发定期清理任务
+	doneCh          chan struct{} // 用于优雅关闭清理协程
 }
 
 // cacheEntry 表示缓存中的一个条目
@@ -31,7 +36,7 @@ type cacheEntry struct {
 // Get 获取缓存项，如果存在且未过期则返回
 func (l *LRUCache) Get(key string) (common.Value, bool) {
 	l.rwMutex.RLock()
-	elem, ok := l.entries[key]
+	elem, ok := l.elementMap[key]
 	if !ok {
 		l.rwMutex.RUnlock()
 		return nil, false
@@ -55,7 +60,7 @@ func (l *LRUCache) Get(key string) (common.Value, bool) {
 	// 更新 LRU 位置需要写锁
 	l.rwMutex.Lock()
 	// 再次检查元素是否仍然存在（可能在获取写锁期间被其他协程删除）
-	if _, ok := l.entries[key]; ok {
+	if _, ok := l.elementMap[key]; ok {
 		l.lruList.MoveToBack(elem)
 	}
 	l.rwMutex.Unlock()
@@ -88,7 +93,7 @@ func (l *LRUCache) SetWithExpiration(key string, value common.Value, expiration 
 	}
 
 	// 如果键已存在，更新值
-	if elem, ok := l.entries[key]; ok {
+	if elem, ok := l.elementMap[key]; ok {
 		entry := elem.Value.(*cacheEntry)
 		l.usedBytes += int64(value.Len() - entry.value.Len())
 		entry.value = value
@@ -99,7 +104,7 @@ func (l *LRUCache) SetWithExpiration(key string, value common.Value, expiration 
 	// 不存在，添加新项
 	entry := &cacheEntry{key: key, value: value}
 	elem := l.lruList.PushBack(entry)
-	l.entries[key] = elem
+	l.elementMap[key] = elem
 	l.usedBytes += int64(len(key) + value.Len())
 
 	// 检查是否需要淘汰旧项
@@ -113,7 +118,7 @@ func (c *LRUCache) Delete(key string) bool {
 	c.rwMutex.Lock()
 	defer c.rwMutex.Unlock()
 
-	if elem, ok := c.entries[key]; ok {
+	if elem, ok := c.elementMap[key]; ok {
 		c.removeElement(elem)
 		return true
 	}
@@ -126,7 +131,7 @@ func (c *LRUCache) Clear() {
 	defer c.rwMutex.Unlock()
 
 	// 遍历所有项调用回调函数
-	for _, elem := range c.entries {
+	for _, elem := range c.elementMap {
 		entry := elem.Value.(*cacheEntry)
 		if c.onEvicted != nil {
 			c.onEvicted(entry.key, entry.value)
@@ -134,7 +139,7 @@ func (c *LRUCache) Clear() {
 	}
 
 	c.lruList.Init()
-	c.entries = make(map[string]*list.Element)
+	c.elementMap = make(map[string]*list.Element)
 	c.expirationMap = make(map[string]time.Time)
 	c.usedBytes = 0
 }
@@ -158,7 +163,7 @@ func (c *LRUCache) Close() {
 func (c *LRUCache) removeElement(elem *list.Element) {
 	entry := elem.Value.(*cacheEntry)
 	c.lruList.Remove(elem)
-	delete(c.entries, entry.key)
+	delete(c.elementMap, entry.key)
 	delete(c.expirationMap, entry.key)
 	c.usedBytes -= int64(len(entry.key) + entry.value.Len())
 
@@ -174,7 +179,7 @@ func (c *LRUCache) evict() {
 	now := time.Now()
 	for key, expTime := range c.expirationMap {
 		if now.After(expTime) {
-			if elem, ok := c.entries[key]; ok {
+			if elem, ok := c.elementMap[key]; ok {
 				c.removeElement(elem)
 			}
 		}
