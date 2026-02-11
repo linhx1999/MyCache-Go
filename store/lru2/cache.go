@@ -77,14 +77,8 @@ func (l *LRU2Cache) Get(key string) (common.Value, bool) {
 
 // Set 添加或更新缓存项（永不过期）
 func (l *LRU2Cache) Set(key string, value common.Value) error {
-	idx := l.keyToBucketIndex(key)
-	l.bucketLocks[idx].Lock()
-	defer l.bucketLocks[idx].Unlock()
-
-	// 放入一级缓存，-1 表示永不过期
-	l.buckets[idx][0].put(key, value, -1, l.onEvicted)
-
-	return nil
+	// 直接调用 SetWithExpiration，传入 0 表示永不过期
+	return l.SetWithExpiration(key, value, 0)
 }
 
 // SetWithExpiration 添加或更新缓存项，并设置过期时间

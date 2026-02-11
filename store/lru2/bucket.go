@@ -89,10 +89,20 @@ func (b *cacheBucket) del(key string) (*cacheEntry, bool, int64) {
 	return nil, false, 0
 }
 
-// walk 遍历缓存中的所有有效项
+// walk 遍历缓存中的所有有效项（按访问顺序：从最近使用到最久未使用）
+// walker 返回 false 表示停止遍历
 func (b *cacheBucket) walk(walker func(key string, value common.Value, deadline int64) bool) {
+	// 从链表头部（最近使用）开始遍历，直到回到哨兵节点（索引 0）
 	for idx := b.links[0][next]; idx != 0; idx = b.links[idx][next] {
-		if b.entries[idx-1].deadline != 0 && !walker(b.entries[idx-1].key, b.entries[idx-1].value, b.entries[idx-1].deadline) {
+		entry := &b.entries[idx-1]
+
+		// 跳过已标记删除的项（deadline == 0）
+		if entry.deadline == 0 {
+			continue
+		}
+
+		// 调用 walker，如果返回 false 则停止遍历
+		if !walker(entry.key, entry.value, entry.deadline) {
 			return
 		}
 	}
