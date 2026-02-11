@@ -114,14 +114,16 @@ func (r *HashRing) Get(key string) string {
 		return r.keys[i] >= hash
 	})
 
-	// 处理边界情况
+	// 处理边界情况（环回绕 wrap-around）
+	// 当目标 hash 大于环上所有虚拟节点的 hash 时，二分查找返回 len(r.keys)
+	// 按照一致性哈希的环状逻辑，此时应该回绕到环的第一个节点（索引 0）
+	// 例如：keys = [10, 20, 30]，查找 key 的 hash = 35，应返回 hash=10 的节点
 	if idx == len(r.keys) {
 		idx = 0
 	}
 
 	node := r.hashMap[r.keys[idx]]
-	count := r.nodeCounts[node]
-	r.nodeCounts[node] = count + 1
+	r.nodeCounts[node]++
 	atomic.AddInt64(&r.totalRequests, 1)
 
 	return node
