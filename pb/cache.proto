@@ -17,7 +17,7 @@ message ResponseForDelete {
   bool value = 1;
 }
 
-service KamaCache {
+service CacheService {
   rpc Get(Request) returns (ResponseForGet);
   rpc Set(Request) returns (ResponseForGet);
   rpc Delete(Request) returns(ResponseForDelete);

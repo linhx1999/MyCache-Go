@@ -20,7 +20,7 @@ import (
 
 // Server 定义缓存服务器
 type Server struct {
-	pb.UnimplementedKamaCacheServer
+	pb.UnimplementedCacheServiceServer
 	addr       string           // 服务地址
 	svcName    string           // 服务名称
 	groups     *sync.Map        // 缓存组
@@ -112,7 +112,7 @@ func NewServer(addr, svcName string, opts ...ServerOption) (*Server, error) {
 	}
 
 	// 注册服务
-	pb.RegisterKamaCacheServer(srv.grpcServer, srv)
+	pb.RegisterCacheServiceServer(srv.grpcServer, srv)
 
 	// 注册健康检查服务
 	healthServer := health.NewServer()
