@@ -73,14 +73,43 @@ func WithTLS(certFile, keyFile string) ServerOption {
 	}
 }
 
-// NewServer 创建新的服务器实例
+// NewServer 创建一个新的缓存服务器实例。
+//
+// 参数：
+//   - addr: 监听地址，格式为 "host:port"，如 ":8001" 或 "0.0.0.0:8001"
+//   - svcName: 服务名称，用于 etcd 注册和集群标识
+//   - opts: 可选的配置选项，如 WithEtcdEndpoints、WithTLS 等
+//
+// 返回值：
+//   - *Server: 创建的服务器实例
+//   - error: 创建过程中的错误，如 etcd 连接失败、TLS 证书加载失败等
+//
+// 创建流程：
+//  1. 解析并应用配置选项
+//  2. 创建 etcd 客户端连接
+//  3. 创建 gRPC 服务器（支持 TLS）
+//  4. 注册缓存服务和健康检查服务
+//
+// 示例：
+//
+//	srv, err := NewServer(":8001", "my-cache",
+//	    WithEtcdEndpoints([]string{"etcd1:2379", "etcd2:2379"}),
+//	    WithTLS("cert.pem", "key.pem"),
+//	)
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
 func NewServer(addr, svcName string, opts ...ServerOption) (*Server, error) {
+	// 从默认配置开始，应用用户传入的选项函数
+	// 这种 Functional Options 模式允许用户只设置需要的选项，其余使用默认值
 	options := DefaultServerOptions
 	for _, opt := range opts {
 		opt(options)
 	}
 
-	// 创建etcd客户端
+	// 创建 etcd 客户端，用于服务注册和发现
+	// Endpoints: etcd 集群的节点地址列表
+	// DialTimeout: 连接超时时间，防止无限等待
 	etcdCli, err := clientv3.New(clientv3.Config{
 		Endpoints:   options.EtcdEndpoints,
 		DialTimeout: options.DialTimeout,
@@ -89,10 +118,14 @@ func NewServer(addr, svcName string, opts ...ServerOption) (*Server, error) {
 		return nil, fmt.Errorf("failed to create etcd client: %v", err)
 	}
 
-	// 创建gRPC服务器
+	// 配置 gRPC 服务器选项
 	var serverOpts []grpc.ServerOption
+	// 设置最大接收消息大小，防止缓存值过大导致请求失败
+	// 默认值 4MB，可通过 WithMaxMsgSize 选项调整
 	serverOpts = append(serverOpts, grpc.MaxRecvMsgSize(options.MaxMsgSize))
 
+	// 如果启用 TLS，加载证书并配置加密传输
+	// TLS 配置确保节点间通信的安全性，防止数据被窃听或篡改
 	if options.TLS {
 		creds, err := loadTLSCredentials(options.CertFile, options.KeyFile)
 		if err != nil {
@@ -101,6 +134,8 @@ func NewServer(addr, svcName string, opts ...ServerOption) (*Server, error) {
 		serverOpts = append(serverOpts, grpc.Creds(creds))
 	}
 
+	// 创建 Server 实例，初始化所有字段
+	// addr 和 svcName 用于服务注册，groups 使用 sync.Map 保证并发安全
 	srv := &Server{
 		addr:       addr,
 		svcName:    svcName,
@@ -111,12 +146,16 @@ func NewServer(addr, svcName string, opts ...ServerOption) (*Server, error) {
 		opts:       options,
 	}
 
-	// 注册服务
+	// 将 Server 实例注册为 gRPC 服务的实现
+	// 这样其他节点可以通过 gRPC 调用 Get、Set、Delete 方法
 	pb.RegisterCacheServiceServer(srv.grpcServer, srv)
 
-	// 注册健康检查服务
+	// 注册 gRPC 健康检查服务
+	// 健康检查用于负载均衡器或服务发现组件检测节点是否可用
+	// 当节点不健康时，可以从服务发现中剔除，避免流量路由到故障节点
 	healthServer := health.NewServer()
 	healthpb.RegisterHealthServer(srv.grpcServer, healthServer)
+	// 设置服务状态为 SERVING，表示节点已准备好接收请求
 	healthServer.SetServingStatus(svcName, healthpb.HealthCheckResponse_SERVING)
 
 	return srv, nil
