@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"strings"
 	"sync"
 	"time"
 
@@ -31,14 +30,14 @@ type Peer interface {
 
 // ClientPicker 实现了PeerPicker接口
 type ClientPicker struct {
-	selfAddr string
-	svcName  string
-	mu       sync.RWMutex
-	consHash *consistenthash.HashRing
-	clients  map[string]*Client
-	etcdCli  *clientv3.Client
-	ctx      context.Context
-	cancel   context.CancelFunc
+	selfAddr string                   // 本节点地址，用于识别自身，避免将请求路由到自己
+	svcName  string                   // 服务名称，用于etcd中区分不同的缓存服务
+	mu       sync.RWMutex             // 保护一致性哈希环和客户端映射的并发访问
+	consHash *consistenthash.HashRing // 一致性哈希环，用于根据key选择目标节点
+	clients  map[string]*Client       // 地址到gRPC客户端的映射，存储与其他节点的连接
+	etcdCli  *clientv3.Client         // etcd客户端，用于服务发现和监听节点变化
+	ctx      context.Context          // 上下文，用于控制服务发现goroutine的生命周期
+	cancel   context.CancelFunc       // 取消函数，用于优雅关闭服务发现
 }
 
 // PickerOption 定义配置选项
@@ -230,10 +229,10 @@ func (p *ClientPicker) Close() error {
 }
 
 // parseAddrFromKey 从etcd key中解析地址
-func parseAddrFromKey(key, svcName string) string {
-	prefix := fmt.Sprintf("/services/%s/", svcName)
-	if strings.HasPrefix(key, prefix) {
-		return strings.TrimPrefix(key, prefix)
-	}
-	return ""
-}
+// func parseAddrFromKey(key, svcName string) string {
+// 	prefix := fmt.Sprintf("/services/%s/", svcName)
+// 	if strings.HasPrefix(key, prefix) {
+// 		return strings.TrimPrefix(key, prefix)
+// 	}
+// 	return ""
+// }
